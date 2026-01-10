@@ -1,0 +1,29 @@
+services:
+  # API OCR Service
+  - type: web
+    name: api-ocr-leitura-faturas
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2
+    envVars:
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: 8000
+      - key: API_DEBUG
+        value: False
+      - key: MAX_FILE_SIZE_MB
+        value: 10
+      - key: ALLOWED_EXTENSIONS
+        value: pdf
+      - key: PADDLE_OCR_LANG
+        value: pt
+      - key: PADDLE_OCR_USE_GPU
+        value: False
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PYTHON_VERSION
+        value: 3.10.12
+    healthCheckPath: /health
+    autoDeploy: true

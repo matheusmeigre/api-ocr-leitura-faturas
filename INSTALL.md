@@ -210,6 +210,37 @@ heroku create nome-da-sua-api
 git push heroku main
 ```
 
+### Deploy no Render.com
+
+**Método 1: Via Dashboard (Mais Fácil)**
+
+1. Conecte seu repositório GitHub ao Render
+2. Crie um novo **Web Service**
+3. Configure:
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2`
+   - **Python Version**: 3.10.12
+4. Adicione as variáveis de ambiente (veja [RENDER_DEPLOY.md](RENDER_DEPLOY.md))
+5. Clique em **Deploy**
+
+**Método 2: Via render.yaml (Automático)**
+
+O projeto já inclui [render.yaml](render.yaml). Basta:
+
+1. Fazer push do código
+2. Conectar o repositório no Render
+3. O Render detecta automaticamente o render.yaml
+4. Deploy automático! 🚀
+
+**Importante para o Render:**
+- ✅ Use **Python 3.10.12** (especificado em [runtime.txt](runtime.txt))
+- ✅ PaddlePaddle versão **3.2.2** (compatível)
+- ✅ opencv-python-headless (sem GUI)
+- ✅ Timeout mínimo: 300s
+- ✅ Memória mínima: 512MB
+
+📚 **Guia completo:** [RENDER_DEPLOY.md](RENDER_DEPLOY.md)
+
 ### Deploy no AWS EC2
 
 1. Conecte via SSH:
