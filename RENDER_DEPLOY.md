@@ -2,13 +2,18 @@
 
 ## Build Command
 ```
-pip install -r requirements.txt
+pip install --upgrade pip && pip install -r requirements.txt
 ```
 
 ## Start Command
 ```
 uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2
 ```
+
+## Python Version
+Python **3.11.11** (especificado em `runtime.txt`)
+
+**IMPORTANTE:** No Render Dashboard, deixe o campo "Python Version" **VAZIO** para que ele use o runtime.txt automaticamente.
 
 ## Variáveis de Ambiente (Render Dashboard)
 
@@ -39,10 +44,13 @@ apt-get update && apt-get install -y \
 
 ## Notas Importantes
 
-1. **PaddlePaddle**: Usando versão 3.2.2 (compatível com Python 3.10+)
-2. **opencv-python-headless**: Versão headless para ambientes sem GUI
-3. **Workers**: Configure 2 workers para melhor performance
-4. **Timeout**: Aumente o timeout para 300s para processar PDFs grandes
+1. **Python Version**: Usando 3.11.11 (compatível com todas as dependências)
+2. **PaddlePaddle**: Versão 3.2.2 (mais recente)
+3. **PaddleOCR**: Versão 2.9.2 (atualizada)
+4. **Pillow**: Versão 11.1.0 (com wheels pré-compilados)
+5. **opencv-python-headless**: Versão headless para ambientes sem GUI
+6. **Workers**: Configure 2 workers para melhor performance
+7. **Timeout**: Aumente o timeout para 300s para processar PDFs grandes
 
 ## Health Check
 

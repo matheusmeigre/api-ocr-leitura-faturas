@@ -1,18 +1,29 @@
 # 🔧 Guia de Troubleshooting - Render Deploy
 
-## ✅ Correções Aplicadas
+## ✅ Correções Aplicadas (Versão 2)
 
-### 1. Versão do PaddlePaddle
+### 1. Versão do Python
+❌ **Erro:** Render usava Python 3.13.4 (muito novo, problemas de compatibilidade)  
+✅ **Correção:** Python 3.11.11 especificado em `runtime.txt`
+
+### 2. Versão do PaddlePaddle
 ❌ **Erro anterior:** `paddlepaddle==2.6.0` (versão não disponível)  
 ✅ **Correção:** `paddlepaddle==3.2.2` (versão atual e compatível)
 
-### 2. OpenCV
-❌ **Erro anterior:** `opencv-python` (requer GUI)  
-✅ **Correção:** `opencv-python-headless` (para servidores)
+### 3. Versão do Pillow
+❌ **Erro:** `Pillow==10.2.0` (falha ao compilar no Python 3.13)  
+✅ **Correção:** `Pillow==11.1.0` (versão mais recente com wheels pré-compilados)
 
-### 3. Camelot removido
-❌ **Problema:** Camelot tem muitas dependências complexas  
-✅ **Solução:** Removido, tabelas são extraídas via pdfplumber
+### 4. Dependências Atualizadas
+Todas as bibliotecas foram atualizadas para versões mais recentes e estáveis:
+- FastAPI: 0.109.0 → **0.115.6**
+- Uvicorn: 0.27.0 → **0.34.0**
+- PaddleOCR: 2.7.3 → **2.9.2**
+- Pydantic: 2.5.3 → **2.10.6**
+- OpenCV: 4.9.0.80 → **4.10.0.84**
+
+### 5. OpenCV
+✅ `opencv-python-headless` (para servidores, sem GUI)
 
 ## 🚀 Passos para Deploy no Render
 
@@ -33,7 +44,8 @@ No Render Dashboard:
 3. **Settings**:
    - Name: `api-ocr-leitura-faturas`
    - Runtime: `Python 3`
-   - Build Command: `pip install -r requirements.txt`
+   - **Python Version**: Deixe em branco (usa `runtime.txt` automaticamente)
+   - Build Command: `pip install --upgrade pip && pip install -r requirements.txt`
    - Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2`
 
 ### 3. Variáveis de Ambiente
@@ -51,9 +63,10 @@ LOG_LEVEL=INFO
 
 ### 4. Configurações Avançadas
 
-- **Python Version**: Deixe em branco (usa runtime.txt automaticamente)
+- **Python Version**: Deixe em branco ou vazio (Render lerá `runtime.txt` = Python 3.11.11)
 - **Health Check Path**: `/health`
 - **Auto-Deploy**: Yes (deploy automático no push)
+- **Instance Type**: Starter ou Standard
 
 ### 5. Plano Recomendado
 
@@ -120,6 +133,30 @@ apt-get update && apt-get install -y poppler-utils && pip install -r requirement
 **Solução:**
 - Normal na primeira vez (~5-10 minutos)
 - Próximos deploys são mais rápidos (cache)
+
+### Erro 7: "KeyError: '__version__'" ao instalar Pillow
+
+**Causa:** Versão antiga do Pillow incompatível com Python 3.13+
+
+**Solução:**
+✅ **Já corrigido!** Agora usa:
+- Python 3.11.11 (via runtime.txt)
+- Pillow 11.1.0 (versão mais recente)
+
+### Erro 8: Render ignora runtime.txt
+
+**Causa:** Render às vezes não detecta runtime.txt
+
+**Solução:**
+No Render Dashboard → Settings → Environment:
+- **NÃO** defina Python Version manualmente
+- Deixe o campo vazio
+- Render usará runtime.txt automaticamente
+
+Ou force no render.yaml (já incluído):
+```yaml
+runtime: python
+```
 
 ## ✅ Checklist Pós-Deploy
 
