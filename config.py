@@ -1,5 +1,5 @@
-from pydantic_settings import BaseSettings
-from typing import List
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     
     # Upload
     max_file_size_mb: int = 10
-    allowed_extensions: List[str] = ["pdf"]
+    allowed_extensions: str = "pdf"  # Separado por vírgula: "pdf,jpg,png"
     
     # OCR
     paddle_ocr_lang: str = "pt"
@@ -21,9 +21,17 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
+    
+    @property
+    def allowed_extensions_list(self) -> list[str]:
+        """Retorna lista de extensões permitidas"""
+        return [ext.strip() for ext in self.allowed_extensions.split(",")]
 
 
 settings = Settings()
