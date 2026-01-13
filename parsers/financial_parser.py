@@ -3,9 +3,20 @@ from typing import Optional, List, Tuple
 from datetime import datetime
 from models import DadosFinanceiros, ItemFinanceiro
 
+# Importa parsers especializados
+try:
+    from parsers.banks.nubank_parser import NubankParser
+    from parsers.utils.date_parser import DateParser
+    from parsers.utils.bank_detector import BankDetector
+    from parsers.utils.cnpj_database import CNPJDatabase
+    SPECIALIZED_PARSERS_AVAILABLE = True
+except ImportError:
+    SPECIALIZED_PARSERS_AVAILABLE = False
+    print("Aviso: Parsers especializados não disponíveis. Usando apenas parser genérico.")
+
 
 class FinancialParser:
-    """Classe para parsing de dados financeiros de documentos"""
+    """Classe para parsing de dados financeiros de documentos com suporte a parsers especializados"""
     
     # Padrões regex para extração
     PATTERNS = {
@@ -28,7 +39,17 @@ class FinancialParser:
     
     def __init__(self):
         """Inicializa o parser"""
-        pass
+        # Inicializa parsers especializados se disponíveis
+        self.specialized_parsers = {}
+        if SPECIALIZED_PARSERS_AVAILABLE:
+            self.specialized_parsers['nubank'] = NubankParser()
+            self.date_parser = DateParser()
+            self.bank_detector = BankDetector()
+            self.cnpj_db = CNPJDatabase()
+        else:
+            self.date_parser = None
+            self.bank_detector = None
+            self.cnpj_db = None
     
     def detect_document_type(self, text: str) -> Tuple[str, float]:
         """
@@ -230,7 +251,7 @@ class FinancialParser:
     
     def parse_financial_data(self, text: str, document_type: str = None) -> DadosFinanceiros:
         """
-        Parse completo dos dados financeiros.
+        Parse completo dos dados financeiros com suporte a parsers especializados.
         
         Args:
             text: Texto do documento
@@ -239,14 +260,59 @@ class FinancialParser:
         Returns:
             DadosFinanceiros com todos os campos extraídos
         """
+        # Tenta usar parser especializado se disponível
+        if SPECIALIZED_PARSERS_AVAILABLE and self.specialized_parsers:
+            # Detecta o banco
+            bank_detection = self.bank_detector.detect_bank(text)
+            
+            if bank_detection:
+                bank_key, bank_name, confidence = bank_detection
+                
+                # Verifica se temos parser especializado para este banco
+                if bank_key in self.specialized_parsers:
+                    parser = self.specialized_parsers[bank_key]
+                    
+                    # Verifica se o parser pode processar este documento
+                    if hasattr(parser, 'can_parse') and parser.can_parse(text):
+                        try:
+                            # Usa parser especializado
+                            dados = parser.parse(text)
+                            # Se CNPJ não foi encontrado, tenta buscar do banco de dados
+                            if not dados.cnpj and bank_key:
+                                dados.cnpj = self.bank_detector.get_cnpj(bank_key)
+                            return dados
+                        except Exception as e:
+                            # Se parser especializado falhar, continua com genérico
+                            print(f"Aviso: Parser especializado falhou, usando genérico. Erro: {e}")
+        
+        # Fallback: usa parser genérico
         dados = DadosFinanceiros()
         
-        # Extrai campos básicos
-        dados.empresa = self.extract_company_name(text)
-        dados.cnpj = self.extract_cnpj(text)
+        # Tenta detectar banco e adicionar CNPJ conhecido
+        if SPECIALIZED_PARSERS_AVAILABLE and self.bank_detector:
+            bank_info = self.bank_detector.detect_bank(text)
+            if bank_info:
+                bank_key, bank_name, confidence = bank_info
+                dados.empresa = bank_name
+                dados.cnpj = self.bank_detector.get_cnpj(bank_key)
+        
+        # Extrai campos básicos com parser genérico
+        if not dados.empresa:
+            dados.empresa = self.extract_company_name(text)
+        if not dados.cnpj:
+            dados.cnpj = self.extract_cnpj(text)
+        
         dados.cpf = self.extract_cpf(text)
-        dados.data_emissao = self.extract_emission_date(text)
-        dados.data_vencimento = self.extract_due_date(text)
+        
+        # Usa DateParser melhorado se disponível
+        if SPECIALIZED_PARSERS_AVAILABLE and self.date_parser:
+            year = self.date_parser.infer_year_from_context(text)
+            dados.data_emissao = self.date_parser.extract_emission_date(text)
+            dados.data_vencimento = self.date_parser.extract_due_date(text)
+        else:
+            dados.data_emissao = self.extract_emission_date(text)
+            dados.data_vencimento = self.extract_due_date(text)
+        
         dados.valor_total = self.extract_total_value(text)
         dados.numero_documento = self.extract_document_number(text)
         
@@ -260,8 +326,7 @@ class FinancialParser:
             if linha_digitavel:
                 dados.linha_digitavel = linha_digitavel.group()
         
-        # Extrai itens (simplificado - pode ser expandido)
-        # Esta é uma implementação básica que pode ser melhorada
+        # Extrai itens
         dados.itens = self.extract_items(text)
         
         return dados
