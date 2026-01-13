@@ -13,21 +13,21 @@ class BankDetector:
             r'nubank',
             r'nu pagamentos',
             r'roxinho',  # apelido popular
-            r'Olá.*Esta é a sua fatura',  # Padrão de abertura do Nubank
+            r'esta [eé] a sua fatura',  # Padrão de abertura do Nubank
         ],
         'inter': [
             r'banco inter',
-            r'inter',
+            r'\binter\b',
             r'banco inter s\.?a\.?',
         ],
         'c6': [
-            r'c6 bank',
+            r'c6\s*bank',
             r'c6bank',
             r'banco c6',
         ],
         'picpay': [
             r'picpay',
-            r'pic pay',
+            r'pic\s*pay',
         ],
         'itau': [
             r'ita[uú]',
@@ -46,7 +46,7 @@ class BankDetector:
         ],
         'caixa': [
             r'caixa econ[oô]mica',
-            r'caixa',
+            r'\bcaixa\b',
         ],
     }
     

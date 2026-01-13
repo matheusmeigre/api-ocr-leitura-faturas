@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     paddle_ocr_lang: str = "pt"
     paddle_ocr_use_gpu: bool = False
     
+    # Cache
+    parser_cache_enabled: bool = True
+    parser_cache_ttl_seconds: int = 3600  # 1 hora
+    parser_cache_max_size: int = 1000
+    
     # Logging
     log_level: str = "INFO"
     

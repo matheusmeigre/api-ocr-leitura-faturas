@@ -1,18 +1,33 @@
 import re
-from typing import Optional, List, Tuple
+import logging
+import json
+import time
+from typing import Optional, List, Tuple, Dict, Any
 from datetime import datetime
 from models import DadosFinanceiros, ItemFinanceiro
 
 # Importa parsers especializados
 try:
     from parsers.banks.nubank_parser import NubankParser
+    from parsers.banks.inter_parser import InterParser
+    from parsers.banks.c6_parser import C6Parser
+    from parsers.banks.picpay_parser import PicPayParser
     from parsers.utils.date_parser import DateParser
     from parsers.utils.bank_detector import BankDetector
     from parsers.utils.cnpj_database import CNPJDatabase
+    from parsers.utils.parser_cache import ParserCache
+    from parsers.utils.parser_metrics import ParserMetrics
+    from parsers.utils.ml_classifier import MLBankClassifier
+    from parsers.utils.feedback_system import FeedbackSystem
+    from parsers.utils.community_templates import CommunityTemplateSystem
+    from config import settings
     SPECIALIZED_PARSERS_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     SPECIALIZED_PARSERS_AVAILABLE = False
-    print("Aviso: Parsers especializados não disponíveis. Usando apenas parser genérico.")
+    print(f"Aviso: Parsers especializados não disponíveis. Erro: {e}")
+
+# Logger estruturado para rastreamento
+logger = logging.getLogger(__name__)
 
 
 class FinancialParser:
@@ -43,13 +58,93 @@ class FinancialParser:
         self.specialized_parsers = {}
         if SPECIALIZED_PARSERS_AVAILABLE:
             self.specialized_parsers['nubank'] = NubankParser()
+            self.specialized_parsers['inter'] = InterParser()
+            self.specialized_parsers['c6'] = C6Parser()
+            self.specialized_parsers['picpay'] = PicPayParser()
             self.date_parser = DateParser()
             self.bank_detector = BankDetector()
             self.cnpj_db = CNPJDatabase()
+            
+            # Inicializa cache (transparente e opcional)
+            self.cache = ParserCache(
+                ttl_seconds=settings.parser_cache_ttl_seconds,
+                max_size=settings.parser_cache_max_size,
+                enabled=settings.parser_cache_enabled
+            )
+            
+            # Inicializa sistema de métricas
+            self.metrics = ParserMetrics()
+            
+            # ONDA 3: Inteligência e Comunidade
+            self.ml_classifier = MLBankClassifier()
+            self.feedback_system = FeedbackSystem()
+            self.template_system = CommunityTemplateSystem()
         else:
             self.date_parser = None
             self.bank_detector = None
             self.cnpj_db = None
+            self.cache = None
+            self.metrics = None
+            self.ml_classifier = None
+            self.feedback_system = None
+            self.template_system = None
+    
+    def _log_parser_selection(self, event_data: Dict[str, Any]) -> None:
+        """
+        Registra log estruturado sobre seleção de parser.
+        
+        Args:
+            event_data: Dados do evento de parsing
+        """
+        log_entry = {
+            "event": "parser_selection",
+            "timestamp": datetime.now().isoformat(),
+            **event_data
+        }
+        logger.info(json.dumps(log_entry, ensure_ascii=False))
+    
+    def get_cache_stats(self) -> Optional[Dict[str, Any]]:
+        """
+        Retorna estatísticas do cache (se disponível).
+        
+        Returns:
+            Dict com estatísticas ou None se cache não disponível
+        """
+        if self.cache:
+            return self.cache.get_stats()
+        return None
+    
+    def get_metrics_summary(self) -> Optional[Dict[str, Any]]:
+        """
+        Retorna resumo das métricas coletadas.
+        
+        Returns:
+            Dict com métricas agregadas ou None se não disponível
+        """
+        if self.metrics:
+            return self.metrics.get_summary()
+        return None
+    
+    def export_metrics_json(self) -> Optional[str]:
+        """
+        Exporta métricas em formato JSON.
+        
+        Returns:
+            String JSON ou None se métricas não disponíveis
+        """
+        if self.metrics:
+            return self.metrics.export_json()
+        return None
+    
+    def log_metrics_summary(self):
+        """Loga resumo das métricas (se disponível)"""
+        if self.metrics:
+            self.metrics.log_summary()
+    
+    def reset_metrics(self):
+        """Reseta as métricas coletadas"""
+        if self.metrics:
+            self.metrics.reset()
     
     def detect_document_type(self, text: str) -> Tuple[str, float]:
         """
@@ -260,10 +355,48 @@ class FinancialParser:
         Returns:
             DadosFinanceiros com todos os campos extraídos
         """
+        # Inicia medição de tempo
+        start_time = time.time()
+        
+        # Variáveis para métricas
+        bank_key = None
+        confidence = 0.0
+        parser_type = "generic"
+        used_fallback = False
+        success = False
+        dados = None
+        
         # Tenta usar parser especializado se disponível
         if SPECIALIZED_PARSERS_AVAILABLE and self.specialized_parsers:
-            # Detecta o banco
-            bank_detection = self.bank_detector.detect_bank(text)
+            # Tenta obter detecção do cache
+            bank_detection = None
+            if self.cache:
+                bank_detection = self.cache.get_bank_detection(text)
+                if bank_detection and self.metrics:
+                    self.metrics.record_cache_hit()
+            
+            # Se não está no cache, detecta o banco
+            if bank_detection is None:
+                if self.metrics:
+                    self.metrics.record_cache_miss()
+                    
+                bank_detection = self.bank_detector.detect_bank(text)
+                
+                # ONDA 3 - Sistema 7: ML como assistente (apenas se confiança baixa)
+                if bank_detection and self.ml_classifier:
+                    _, _, rule_confidence = bank_detection
+                    if self.ml_classifier.should_assist(rule_confidence):
+                        ml_prediction = self.ml_classifier.predict(text)
+                        if ml_prediction:
+                            ml_bank, ml_confidence = ml_prediction
+                            # Se ML tem maior confiança, usa predição do ML
+                            if ml_confidence > rule_confidence:
+                                logger.info(f"ML override: {ml_bank} (conf={ml_confidence:.2f}) vs rule {bank_detection[0]} (conf={rule_confidence:.2f})")
+                                bank_detection = (ml_bank, f"ML: {ml_bank}", ml_confidence)
+                
+                # Armazena no cache
+                if bank_detection and self.cache:
+                    self.cache.set_bank_detection(text, bank_detection)
             
             if bank_detection:
                 bank_key, bank_name, confidence = bank_detection
@@ -271,30 +404,104 @@ class FinancialParser:
                 # Verifica se temos parser especializado para este banco
                 if bank_key in self.specialized_parsers:
                     parser = self.specialized_parsers[bank_key]
+                    parser_name = parser.__class__.__name__
                     
                     # Verifica se o parser pode processar este documento
                     if hasattr(parser, 'can_parse') and parser.can_parse(text):
                         try:
+                            # Log: usando parser especializado
+                            self._log_parser_selection({
+                                "bank": bank_key,
+                                "bank_name": bank_name,
+                                "parser": parser_name,
+                                "confidence": round(confidence, 3),
+                                "fallback": False,
+                                "reason": None
+                            })
+                            
                             # Usa parser especializado
+                            parser_type = "specialized"
                             dados = parser.parse(text)
+                            success = True
+                            
                             # Se CNPJ não foi encontrado, tenta buscar do banco de dados
                             if not dados.cnpj and bank_key:
                                 dados.cnpj = self.bank_detector.get_cnpj(bank_key)
+                            
+                            # Registra métricas
+                            if self.metrics:
+                                processing_time = time.time() - start_time
+                                fields_extracted = self._get_extracted_fields(dados)
+                                self.metrics.record_parse_attempt(
+                                    bank=bank_key,
+                                    parser_type=parser_type,
+                                    confidence=confidence,
+                                    processing_time=processing_time,
+                                    success=success,
+                                    fields_extracted=fields_extracted,
+                                    used_fallback=False
+                                )
+                            
                             return dados
                         except Exception as e:
-                            # Se parser especializado falhar, continua com genérico
-                            print(f"Aviso: Parser especializado falhou, usando genérico. Erro: {e}")
+                            # Log: fallback por erro
+                            self._log_parser_selection({
+                                "bank": bank_key,
+                                "bank_name": bank_name,
+                                "parser": "GenericParser",
+                                "confidence": round(confidence, 3),
+                                "fallback": True,
+                                "reason": f"specialized_parser_error: {str(e)}"
+                            })
+                            logger.warning(f"Parser especializado falhou, usando genérico. Erro: {e}")
+                            used_fallback = True
+                else:
+                    # Log: banco detectado mas sem parser especializado
+                    self._log_parser_selection({
+                        "bank": bank_key,
+                        "bank_name": bank_name,
+                        "parser": "GenericParser",
+                        "confidence": round(confidence, 3),
+                        "fallback": True,
+                        "reason": "no_specialized_parser_available"
+                    })
+                    used_fallback = True
+            else:
+                # Log: banco não detectado
+                self._log_parser_selection({
+                    "bank": "unknown",
+                    "bank_name": "Unknown",
+                    "parser": "GenericParser",
+                    "confidence": 0.0,
+                    "fallback": True,
+                    "reason": "bank_not_detected"
+                })
+                used_fallback = True
+        else:
+            # Log: parsers especializados não disponíveis
+            self._log_parser_selection({
+                "bank": "unknown",
+                "bank_name": "Unknown",
+                "parser": "GenericParser",
+                "confidence": 0.0,
+                "fallback": True,
+                "reason": "specialized_parsers_not_available"
+            })
+            used_fallback = True
         
         # Fallback: usa parser genérico
         dados = DadosFinanceiros()
+        success = True  # Parser genérico sempre retorna algo
         
         # Tenta detectar banco e adicionar CNPJ conhecido
         if SPECIALIZED_PARSERS_AVAILABLE and self.bank_detector:
             bank_info = self.bank_detector.detect_bank(text)
             if bank_info:
-                bank_key, bank_name, confidence = bank_info
+                detected_bank_key, bank_name, confidence = bank_info
+                if bank_key is None:
+                    bank_key = detected_bank_key
                 dados.empresa = bank_name
-                dados.cnpj = self.bank_detector.get_cnpj(bank_key)
+                dados.cnpj = self.bank_detector.get_cnpj(detected_bank_key)
         
         # Extrai campos básicos com parser genérico
         if not dados.empresa:
@@ -329,7 +536,54 @@ class FinancialParser:
         # Extrai itens
         dados.itens = self.extract_items(text)
         
+        # Registra métricas do parser genérico
+        if self.metrics:
+            processing_time = time.time() - start_time
+            fields_extracted = self._get_extracted_fields(dados)
+            self.metrics.record_parse_attempt(
+                bank=bank_key,
+                parser_type=parser_type,
+                confidence=confidence,
+                processing_time=processing_time,
+                success=success,
+                fields_extracted=fields_extracted,
+                used_fallback=used_fallback
+            )
+        
         return dados
+    
+    def _get_extracted_fields(self, dados: DadosFinanceiros) -> List[str]:
+        """
+        Identifica quais campos foram extraídos com sucesso.
+        
+        Args:
+            dados: DadosFinanceiros extraídos
+            
+        Returns:
+            Lista de nomes de campos preenchidos
+        """
+        fields = []
+        if dados.empresa:
+            fields.append("empresa")
+        if dados.cnpj:
+            fields.append("cnpj")
+        if dados.cpf:
+            fields.append("cpf")
+        if dados.data_emissao:
+            fields.append("data_emissao")
+        if dados.data_vencimento:
+            fields.append("data_vencimento")
+        if dados.valor_total:
+            fields.append("valor_total")
+        if dados.numero_documento:
+            fields.append("numero_documento")
+        if dados.codigo_barras:
+            fields.append("codigo_barras")
+        if dados.linha_digitavel:
+            fields.append("linha_digitavel")
+        if dados.itens:
+            fields.append("itens")
+        return fields
     
     def calculate_extraction_confidence(self, dados: DadosFinanceiros, document_type: str = None) -> float:
         """
@@ -405,3 +659,165 @@ class FinancialParser:
                     ))
         
         return items[:20]  # Limita a 20 itens
+    
+    # ========== ONDA 3: Inteligência e Comunidade ==========
+    
+    def submit_feedback(
+        self,
+        document_text: str,
+        detected_bank: Optional[str] = None,
+        correct_bank: Optional[str] = None,
+        extracted_data: Optional[Dict[str, Any]] = None,
+        correct_data: Optional[Dict[str, Any]] = None,
+        user_comment: Optional[str] = None
+    ) -> int:
+        """
+        Submete feedback de correção do usuário (Sistema 8).
+        
+        Args:
+            document_text: Texto original do documento
+            detected_bank: Banco detectado pelo sistema
+            correct_bank: Banco correto segundo usuário
+            extracted_data: Dados extraídos pelo sistema
+            correct_data: Dados corretos segundo usuário
+            user_comment: Comentário adicional
+            
+        Returns:
+            ID do feedback ou -1 se falhar
+        """
+        if not self.feedback_system:
+            return -1
+        
+        return self.feedback_system.submit_feedback(
+            document_text=document_text,
+            detected_bank=detected_bank,
+            correct_bank=correct_bank,
+            extracted_data=extracted_data,
+            correct_data=correct_data,
+            user_comment=user_comment
+        )
+    
+    def get_feedback_stats(self) -> Dict[str, Any]:
+        """Retorna estatísticas de feedback"""
+        if not self.feedback_system:
+            return {}
+        return self.feedback_system.get_feedback_stats()
+    
+    def retrain_ml_from_feedback(self) -> bool:
+        """
+        Retreina modelo ML com feedbacks não processados (Sistema 7).
+        
+        Returns:
+            True se retreinou com sucesso
+        """
+        if not self.ml_classifier or not self.feedback_system:
+            return False
+        
+        try:
+            # Obtém feedbacks não processados
+            feedbacks = self.feedback_system.get_unprocessed_feedback(limit=1000)
+            
+            if not feedbacks:
+                logger.info("No unprocessed feedback to retrain")
+                return False
+            
+            # Prepara dados para treinamento
+            training_data = []
+            for fb in feedbacks:
+                if fb.get('correct_bank'):
+                    training_data.append({
+                        'text': fb['document_text'],
+                        'correct_bank': fb['correct_bank']
+                    })
+            
+            # Treina modelo
+            self.ml_classifier.train_from_feedback(training_data)
+            
+            # Marca feedbacks como processados
+            feedback_ids = [fb['id'] for fb in feedbacks]
+            self.feedback_system.mark_as_processed(feedback_ids)
+            
+            logger.info(f"ML model retrained with {len(training_data)} samples")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to retrain ML: {e}")
+            return False
+    
+    def submit_community_template(
+        self,
+        bank_key: str,
+        bank_name: str,
+        cnpj: str,
+        detection_patterns: List[str],
+        extraction_patterns: Dict[str, str],
+        author: str,
+        description: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Submete template comunitário para novo banco (Sistema 9).
+        
+        Args:
+            bank_key: Identificador único (ex: 'santander')
+            bank_name: Nome completo do banco
+            cnpj: CNPJ do banco
+            detection_patterns: Lista de regex para detecção
+            extraction_patterns: Dict de regex para extração
+            author: Nome/email do autor
+            description: Descrição opcional
+            
+        Returns:
+            Dict com resultado da submissão
+        """
+        if not self.template_system:
+            return {
+                "success": False,
+                "error": "Template system not available"
+            }
+        
+        return self.template_system.submit_template(
+            bank_key=bank_key,
+            bank_name=bank_name,
+            cnpj=cnpj,
+            detection_patterns=detection_patterns,
+            extraction_patterns=extraction_patterns,
+            author=author,
+            description=description
+        )
+    
+    def list_community_templates(self) -> Dict[str, Any]:
+        """
+        Lista templates comunitários disponíveis.
+        
+        Returns:
+            Dict com templates aprovados e pendentes
+        """
+        if not self.template_system:
+            return {"approved": [], "pending": []}
+        
+        return {
+            "approved": self.template_system.list_approved_templates(),
+            "pending": self.template_system.list_pending_templates()
+        }
+    
+    def approve_community_template(self, template_hash: str, reviewer: str) -> bool:
+        """
+        Aprova template comunitário (requer privilégios de admin).
+        
+        Args:
+            template_hash: Hash do template
+            reviewer: Nome do revisor
+            
+        Returns:
+            True se aprovado
+        """
+        if not self.template_system:
+            return False
+        
+        return self.template_system.approve_template(template_hash, reviewer)
+    
+    def get_ml_model_info(self) -> Dict[str, Any]:
+        """Retorna informações sobre o modelo ML"""
+        if not self.ml_classifier:
+            return {"enabled": False}
+        return self.ml_classifier.get_model_info()
