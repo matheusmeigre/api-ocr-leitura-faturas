@@ -149,7 +149,15 @@ class NubankParser:
         """
         Extrai transações da fatura do Nubank.
         
+        Filtra apenas COMPRAS, excluindo:
+        - Pagamentos (valores negativos)
+        - Créditos (valores negativos)
+        - Juros e IOF
+        
         Formato típico:
+        17 OUT •••• 2300 Moreira Vidracaria - Parcela 2/3 R$ 250,00
+        
+        Ou formato alternativo (múltiplas linhas):
         17 OUT
          •••• 2300 Moreira Vidracaria - Parcela 2/3 R$ 250,00
         """
@@ -158,39 +166,90 @@ class NubankParser:
         # Divide o texto em linhas
         lines = text.split('\n')
         
-        current_date = None
+        # Padrão de transação em UMA linha (formato novo):
+        # "17 OUT •••• 2300 Moreira Vidracaria - Parcela 2/3 R$ 250,00"
+        single_line_pattern = r'^(\d{1,2})\s+(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s+[•●*]+\s+\d{4}\s+(.+?)\s+R\$\s*([\d.,]+)$'
+        
+        # Padrão de data sozinha (formato antigo)
         date_pattern = r'^(\d{1,2})\s+(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)$'
         
-        # Padrão de transação: pode ter bullets, números, descrição e valor
-        # Exemplos:
+        # Padrão de transação sem data (formato antigo):
         # " •••• 2300 Moreira Vidracaria - Parcela 2/3 R$ 250,00"
-        # " •••• 7994 Dl *Google Roblox R$ 59,00"
-        transaction_pattern = r'[•●*\s]*\d{4}\s+(.+?)\s+R\$\s*([\d.,]+)'
+        transaction_pattern = r'^\s*[•●*]+\s+\d{4}\s+(.+?)\s+R\$\s*([\d.,]+)$'
+        
+        # Padrões para EXCLUIR (não são compras)
+        exclude_patterns = [
+            r'Pagamento',
+            r'Crédito',
+            r'Juros',
+            r'IOF',
+            r'Saldo',
+            r'^-',  # Valores negativos
+            r'−'    # Sinal de menos unicode
+        ]
+        
+        current_date = None
         
         for line in lines:
-            line = line.strip()
+            line_stripped = line.strip()
             
-            # Verifica se é uma linha de data
-            date_match = re.match(date_pattern, line, re.IGNORECASE)
-            if date_match:
-                day, month = date_match.groups()
-                current_date = self.date_parser.parse_date(f"{day} {month}", context_year=year)
+            # Tenta formato de UMA linha (novo)
+            match_single = re.match(single_line_pattern, line_stripped, re.IGNORECASE)
+            if match_single:
+                day, month, descricao, valor_str = match_single.groups()
+                
+                # Verifica se deve excluir esta transação
+                should_exclude = any(
+                    re.search(pattern, line_stripped, re.IGNORECASE) 
+                    for pattern in exclude_patterns
+                )
+                
+                if not should_exclude:
+                    valor = self._parse_value(valor_str)
+                    
+                    # Filtra descrições muito curtas ou valores inválidos
+                    if valor and valor > 0 and len(descricao) > 2:
+                        # Parse da data
+                        date_str = f"{day} {month}"
+                        data = self.date_parser.parse_date(date_str, context_year=year)
+                        
+                        items.append(ItemFinanceiro(
+                            descricao=descricao.strip(),
+                            valor=valor,
+                            data=data
+                        ))
                 continue
             
-            # Verifica se é uma linha de transação
-            transaction_match = re.search(transaction_pattern, line)
-            if transaction_match and current_date:
-                descricao = transaction_match.group(1).strip()
-                valor_str = transaction_match.group(2)
-                valor = self._parse_value(valor_str)
+            # Tenta formato de MÚLTIPLAS linhas (antigo)
+            # Primeiro verifica se é uma linha de data
+            match_date = re.match(date_pattern, line_stripped, re.IGNORECASE)
+            if match_date:
+                day, month = match_date.groups()
+                date_str = f"{day} {month}"
+                current_date = self.date_parser.parse_date(date_str, context_year=year)
+                continue
+            
+            # Depois verifica se é uma transação (precisa ter data corrente)
+            match_transaction = re.match(transaction_pattern, line_stripped, re.IGNORECASE)
+            if match_transaction and current_date:
+                descricao, valor_str = match_transaction.groups()
                 
-                # Filtra descrições muito curtas ou inválidas
-                if valor and len(descricao) > 2:
-                    items.append(ItemFinanceiro(
-                        descricao=descricao,
-                        valor=valor,
-                        data=current_date
-                    ))
+                # Verifica se deve excluir esta transação
+                should_exclude = any(
+                    re.search(pattern, line_stripped, re.IGNORECASE) 
+                    for pattern in exclude_patterns
+                )
+                
+                if not should_exclude:
+                    valor = self._parse_value(valor_str)
+                    
+                    # Filtra descrições muito curtas ou valores inválidos
+                    if valor and valor > 0 and len(descricao) > 2:
+                        items.append(ItemFinanceiro(
+                            descricao=descricao.strip(),
+                            valor=valor,
+                            data=current_date
+                        ))
         
         return items
     
