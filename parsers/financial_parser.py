@@ -17,6 +17,9 @@ try:
     from parsers.utils.cnpj_database import CNPJDatabase
     from parsers.utils.parser_cache import ParserCache
     from parsers.utils.parser_metrics import ParserMetrics
+    from parsers.utils.ml_classifier import MLBankClassifier
+    from parsers.utils.feedback_system import FeedbackSystem
+    from parsers.utils.community_templates import CommunityTemplateSystem
     from config import settings
     SPECIALIZED_PARSERS_AVAILABLE = True
 except ImportError as e:
@@ -71,12 +74,20 @@ class FinancialParser:
             
             # Inicializa sistema de métricas
             self.metrics = ParserMetrics()
+            
+            # ONDA 3: Inteligência e Comunidade
+            self.ml_classifier = MLBankClassifier()
+            self.feedback_system = FeedbackSystem()
+            self.template_system = CommunityTemplateSystem()
         else:
             self.date_parser = None
             self.bank_detector = None
             self.cnpj_db = None
             self.cache = None
             self.metrics = None
+            self.ml_classifier = None
+            self.feedback_system = None
+            self.template_system = None
     
     def _log_parser_selection(self, event_data: Dict[str, Any]) -> None:
         """
@@ -371,6 +382,18 @@ class FinancialParser:
                     
                 bank_detection = self.bank_detector.detect_bank(text)
                 
+                # ONDA 3 - Sistema 7: ML como assistente (apenas se confiança baixa)
+                if bank_detection and self.ml_classifier:
+                    _, _, rule_confidence = bank_detection
+                    if self.ml_classifier.should_assist(rule_confidence):
+                        ml_prediction = self.ml_classifier.predict(text)
+                        if ml_prediction:
+                            ml_bank, ml_confidence = ml_prediction
+                            # Se ML tem maior confiança, usa predição do ML
+                            if ml_confidence > rule_confidence:
+                                logger.info(f"ML override: {ml_bank} (conf={ml_confidence:.2f}) vs rule {bank_detection[0]} (conf={rule_confidence:.2f})")
+                                bank_detection = (ml_bank, f"ML: {ml_bank}", ml_confidence)
+                
                 # Armazena no cache
                 if bank_detection and self.cache:
                     self.cache.set_bank_detection(text, bank_detection)
@@ -636,3 +659,165 @@ class FinancialParser:
                     ))
         
         return items[:20]  # Limita a 20 itens
+    
+    # ========== ONDA 3: Inteligência e Comunidade ==========
+    
+    def submit_feedback(
+        self,
+        document_text: str,
+        detected_bank: Optional[str] = None,
+        correct_bank: Optional[str] = None,
+        extracted_data: Optional[Dict[str, Any]] = None,
+        correct_data: Optional[Dict[str, Any]] = None,
+        user_comment: Optional[str] = None
+    ) -> int:
+        """
+        Submete feedback de correção do usuário (Sistema 8).
+        
+        Args:
+            document_text: Texto original do documento
+            detected_bank: Banco detectado pelo sistema
+            correct_bank: Banco correto segundo usuário
+            extracted_data: Dados extraídos pelo sistema
+            correct_data: Dados corretos segundo usuário
+            user_comment: Comentário adicional
+            
+        Returns:
+            ID do feedback ou -1 se falhar
+        """
+        if not self.feedback_system:
+            return -1
+        
+        return self.feedback_system.submit_feedback(
+            document_text=document_text,
+            detected_bank=detected_bank,
+            correct_bank=correct_bank,
+            extracted_data=extracted_data,
+            correct_data=correct_data,
+            user_comment=user_comment
+        )
+    
+    def get_feedback_stats(self) -> Dict[str, Any]:
+        """Retorna estatísticas de feedback"""
+        if not self.feedback_system:
+            return {}
+        return self.feedback_system.get_feedback_stats()
+    
+    def retrain_ml_from_feedback(self) -> bool:
+        """
+        Retreina modelo ML com feedbacks não processados (Sistema 7).
+        
+        Returns:
+            True se retreinou com sucesso
+        """
+        if not self.ml_classifier or not self.feedback_system:
+            return False
+        
+        try:
+            # Obtém feedbacks não processados
+            feedbacks = self.feedback_system.get_unprocessed_feedback(limit=1000)
+            
+            if not feedbacks:
+                logger.info("No unprocessed feedback to retrain")
+                return False
+            
+            # Prepara dados para treinamento
+            training_data = []
+            for fb in feedbacks:
+                if fb.get('correct_bank'):
+                    training_data.append({
+                        'text': fb['document_text'],
+                        'correct_bank': fb['correct_bank']
+                    })
+            
+            # Treina modelo
+            self.ml_classifier.train_from_feedback(training_data)
+            
+            # Marca feedbacks como processados
+            feedback_ids = [fb['id'] for fb in feedbacks]
+            self.feedback_system.mark_as_processed(feedback_ids)
+            
+            logger.info(f"ML model retrained with {len(training_data)} samples")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to retrain ML: {e}")
+            return False
+    
+    def submit_community_template(
+        self,
+        bank_key: str,
+        bank_name: str,
+        cnpj: str,
+        detection_patterns: List[str],
+        extraction_patterns: Dict[str, str],
+        author: str,
+        description: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Submete template comunitário para novo banco (Sistema 9).
+        
+        Args:
+            bank_key: Identificador único (ex: 'santander')
+            bank_name: Nome completo do banco
+            cnpj: CNPJ do banco
+            detection_patterns: Lista de regex para detecção
+            extraction_patterns: Dict de regex para extração
+            author: Nome/email do autor
+            description: Descrição opcional
+            
+        Returns:
+            Dict com resultado da submissão
+        """
+        if not self.template_system:
+            return {
+                "success": False,
+                "error": "Template system not available"
+            }
+        
+        return self.template_system.submit_template(
+            bank_key=bank_key,
+            bank_name=bank_name,
+            cnpj=cnpj,
+            detection_patterns=detection_patterns,
+            extraction_patterns=extraction_patterns,
+            author=author,
+            description=description
+        )
+    
+    def list_community_templates(self) -> Dict[str, Any]:
+        """
+        Lista templates comunitários disponíveis.
+        
+        Returns:
+            Dict com templates aprovados e pendentes
+        """
+        if not self.template_system:
+            return {"approved": [], "pending": []}
+        
+        return {
+            "approved": self.template_system.list_approved_templates(),
+            "pending": self.template_system.list_pending_templates()
+        }
+    
+    def approve_community_template(self, template_hash: str, reviewer: str) -> bool:
+        """
+        Aprova template comunitário (requer privilégios de admin).
+        
+        Args:
+            template_hash: Hash do template
+            reviewer: Nome do revisor
+            
+        Returns:
+            True se aprovado
+        """
+        if not self.template_system:
+            return False
+        
+        return self.template_system.approve_template(template_hash, reviewer)
+    
+    def get_ml_model_info(self) -> Dict[str, Any]:
+        """Retorna informações sobre o modelo ML"""
+        if not self.ml_classifier:
+            return {"enabled": False}
+        return self.ml_classifier.get_model_info()
