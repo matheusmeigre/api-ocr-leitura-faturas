@@ -1,6 +1,7 @@
 import re
 import logging
 import json
+import time
 from typing import Optional, List, Tuple, Dict, Any
 from datetime import datetime
 from models import DadosFinanceiros, ItemFinanceiro
@@ -15,6 +16,7 @@ try:
     from parsers.utils.bank_detector import BankDetector
     from parsers.utils.cnpj_database import CNPJDatabase
     from parsers.utils.parser_cache import ParserCache
+    from parsers.utils.parser_metrics import ParserMetrics
     from config import settings
     SPECIALIZED_PARSERS_AVAILABLE = True
 except ImportError as e:
@@ -66,11 +68,15 @@ class FinancialParser:
                 max_size=settings.parser_cache_max_size,
                 enabled=settings.parser_cache_enabled
             )
+            
+            # Inicializa sistema de métricas
+            self.metrics = ParserMetrics()
         else:
             self.date_parser = None
             self.bank_detector = None
             self.cnpj_db = None
             self.cache = None
+            self.metrics = None
     
     def _log_parser_selection(self, event_data: Dict[str, Any]) -> None:
         """
@@ -96,6 +102,38 @@ class FinancialParser:
         if self.cache:
             return self.cache.get_stats()
         return None
+    
+    def get_metrics_summary(self) -> Optional[Dict[str, Any]]:
+        """
+        Retorna resumo das métricas coletadas.
+        
+        Returns:
+            Dict com métricas agregadas ou None se não disponível
+        """
+        if self.metrics:
+            return self.metrics.get_summary()
+        return None
+    
+    def export_metrics_json(self) -> Optional[str]:
+        """
+        Exporta métricas em formato JSON.
+        
+        Returns:
+            String JSON ou None se métricas não disponíveis
+        """
+        if self.metrics:
+            return self.metrics.export_json()
+        return None
+    
+    def log_metrics_summary(self):
+        """Loga resumo das métricas (se disponível)"""
+        if self.metrics:
+            self.metrics.log_summary()
+    
+    def reset_metrics(self):
+        """Reseta as métricas coletadas"""
+        if self.metrics:
+            self.metrics.reset()
     
     def detect_document_type(self, text: str) -> Tuple[str, float]:
         """
@@ -306,15 +344,31 @@ class FinancialParser:
         Returns:
             DadosFinanceiros com todos os campos extraídos
         """
+        # Inicia medição de tempo
+        start_time = time.time()
+        
+        # Variáveis para métricas
+        bank_key = None
+        confidence = 0.0
+        parser_type = "generic"
+        used_fallback = False
+        success = False
+        dados = None
+        
         # Tenta usar parser especializado se disponível
         if SPECIALIZED_PARSERS_AVAILABLE and self.specialized_parsers:
             # Tenta obter detecção do cache
             bank_detection = None
             if self.cache:
                 bank_detection = self.cache.get_bank_detection(text)
+                if bank_detection and self.metrics:
+                    self.metrics.record_cache_hit()
             
             # Se não está no cache, detecta o banco
             if bank_detection is None:
+                if self.metrics:
+                    self.metrics.record_cache_miss()
+                    
                 bank_detection = self.bank_detector.detect_bank(text)
                 
                 # Armazena no cache
@@ -343,10 +397,28 @@ class FinancialParser:
                             })
                             
                             # Usa parser especializado
+                            parser_type = "specialized"
                             dados = parser.parse(text)
+                            success = True
+                            
                             # Se CNPJ não foi encontrado, tenta buscar do banco de dados
                             if not dados.cnpj and bank_key:
                                 dados.cnpj = self.bank_detector.get_cnpj(bank_key)
+                            
+                            # Registra métricas
+                            if self.metrics:
+                                processing_time = time.time() - start_time
+                                fields_extracted = self._get_extracted_fields(dados)
+                                self.metrics.record_parse_attempt(
+                                    bank=bank_key,
+                                    parser_type=parser_type,
+                                    confidence=confidence,
+                                    processing_time=processing_time,
+                                    success=success,
+                                    fields_extracted=fields_extracted,
+                                    used_fallback=False
+                                )
+                            
                             return dados
                         except Exception as e:
                             # Log: fallback por erro
@@ -359,6 +431,7 @@ class FinancialParser:
                                 "reason": f"specialized_parser_error: {str(e)}"
                             })
                             logger.warning(f"Parser especializado falhou, usando genérico. Erro: {e}")
+                            used_fallback = True
                 else:
                     # Log: banco detectado mas sem parser especializado
                     self._log_parser_selection({
@@ -369,6 +442,7 @@ class FinancialParser:
                         "fallback": True,
                         "reason": "no_specialized_parser_available"
                     })
+                    used_fallback = True
             else:
                 # Log: banco não detectado
                 self._log_parser_selection({
@@ -379,6 +453,7 @@ class FinancialParser:
                     "fallback": True,
                     "reason": "bank_not_detected"
                 })
+                used_fallback = True
         else:
             # Log: parsers especializados não disponíveis
             self._log_parser_selection({
@@ -389,17 +464,21 @@ class FinancialParser:
                 "fallback": True,
                 "reason": "specialized_parsers_not_available"
             })
+            used_fallback = True
         
         # Fallback: usa parser genérico
         dados = DadosFinanceiros()
+        success = True  # Parser genérico sempre retorna algo
         
         # Tenta detectar banco e adicionar CNPJ conhecido
         if SPECIALIZED_PARSERS_AVAILABLE and self.bank_detector:
             bank_info = self.bank_detector.detect_bank(text)
             if bank_info:
-                bank_key, bank_name, confidence = bank_info
+                detected_bank_key, bank_name, confidence = bank_info
+                if bank_key is None:
+                    bank_key = detected_bank_key
                 dados.empresa = bank_name
-                dados.cnpj = self.bank_detector.get_cnpj(bank_key)
+                dados.cnpj = self.bank_detector.get_cnpj(detected_bank_key)
         
         # Extrai campos básicos com parser genérico
         if not dados.empresa:
@@ -434,7 +513,54 @@ class FinancialParser:
         # Extrai itens
         dados.itens = self.extract_items(text)
         
+        # Registra métricas do parser genérico
+        if self.metrics:
+            processing_time = time.time() - start_time
+            fields_extracted = self._get_extracted_fields(dados)
+            self.metrics.record_parse_attempt(
+                bank=bank_key,
+                parser_type=parser_type,
+                confidence=confidence,
+                processing_time=processing_time,
+                success=success,
+                fields_extracted=fields_extracted,
+                used_fallback=used_fallback
+            )
+        
         return dados
+    
+    def _get_extracted_fields(self, dados: DadosFinanceiros) -> List[str]:
+        """
+        Identifica quais campos foram extraídos com sucesso.
+        
+        Args:
+            dados: DadosFinanceiros extraídos
+            
+        Returns:
+            Lista de nomes de campos preenchidos
+        """
+        fields = []
+        if dados.empresa:
+            fields.append("empresa")
+        if dados.cnpj:
+            fields.append("cnpj")
+        if dados.cpf:
+            fields.append("cpf")
+        if dados.data_emissao:
+            fields.append("data_emissao")
+        if dados.data_vencimento:
+            fields.append("data_vencimento")
+        if dados.valor_total:
+            fields.append("valor_total")
+        if dados.numero_documento:
+            fields.append("numero_documento")
+        if dados.codigo_barras:
+            fields.append("codigo_barras")
+        if dados.linha_digitavel:
+            fields.append("linha_digitavel")
+        if dados.itens:
+            fields.append("itens")
+        return fields
     
     def calculate_extraction_confidence(self, dados: DadosFinanceiros, document_type: str = None) -> float:
         """
