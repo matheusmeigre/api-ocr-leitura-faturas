@@ -9,13 +9,17 @@ from models import DadosFinanceiros, ItemFinanceiro
 try:
     from parsers.banks.nubank_parser import NubankParser
     from parsers.banks.inter_parser import InterParser
+    from parsers.banks.c6_parser import C6Parser
+    from parsers.banks.picpay_parser import PicPayParser
     from parsers.utils.date_parser import DateParser
     from parsers.utils.bank_detector import BankDetector
     from parsers.utils.cnpj_database import CNPJDatabase
+    from parsers.utils.parser_cache import ParserCache
+    from config import settings
     SPECIALIZED_PARSERS_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     SPECIALIZED_PARSERS_AVAILABLE = False
-    print("Aviso: Parsers especializados não disponíveis. Usando apenas parser genérico.")
+    print(f"Aviso: Parsers especializados não disponíveis. Erro: {e}")
 
 # Logger estruturado para rastreamento
 logger = logging.getLogger(__name__)
@@ -50,13 +54,23 @@ class FinancialParser:
         if SPECIALIZED_PARSERS_AVAILABLE:
             self.specialized_parsers['nubank'] = NubankParser()
             self.specialized_parsers['inter'] = InterParser()
+            self.specialized_parsers['c6'] = C6Parser()
+            self.specialized_parsers['picpay'] = PicPayParser()
             self.date_parser = DateParser()
             self.bank_detector = BankDetector()
             self.cnpj_db = CNPJDatabase()
+            
+            # Inicializa cache (transparente e opcional)
+            self.cache = ParserCache(
+                ttl_seconds=settings.parser_cache_ttl_seconds,
+                max_size=settings.parser_cache_max_size,
+                enabled=settings.parser_cache_enabled
+            )
         else:
             self.date_parser = None
             self.bank_detector = None
             self.cnpj_db = None
+            self.cache = None
     
     def _log_parser_selection(self, event_data: Dict[str, Any]) -> None:
         """
@@ -71,6 +85,17 @@ class FinancialParser:
             **event_data
         }
         logger.info(json.dumps(log_entry, ensure_ascii=False))
+    
+    def get_cache_stats(self) -> Optional[Dict[str, Any]]:
+        """
+        Retorna estatísticas do cache (se disponível).
+        
+        Returns:
+            Dict com estatísticas ou None se cache não disponível
+        """
+        if self.cache:
+            return self.cache.get_stats()
+        return None
     
     def detect_document_type(self, text: str) -> Tuple[str, float]:
         """
@@ -283,8 +308,18 @@ class FinancialParser:
         """
         # Tenta usar parser especializado se disponível
         if SPECIALIZED_PARSERS_AVAILABLE and self.specialized_parsers:
-            # Detecta o banco
-            bank_detection = self.bank_detector.detect_bank(text)
+            # Tenta obter detecção do cache
+            bank_detection = None
+            if self.cache:
+                bank_detection = self.cache.get_bank_detection(text)
+            
+            # Se não está no cache, detecta o banco
+            if bank_detection is None:
+                bank_detection = self.bank_detector.detect_bank(text)
+                
+                # Armazena no cache
+                if bank_detection and self.cache:
+                    self.cache.set_bank_detection(text, bank_detection)
             
             if bank_detection:
                 bank_key, bank_name, confidence = bank_detection
