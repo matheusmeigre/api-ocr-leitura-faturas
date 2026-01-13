@@ -220,4 +220,11 @@ class PicPayParser:
                         data=current_date
                     ))
         
-        return items[:50]
+        # Remove duplicatas (proteção adicional)
+        unique_items = {}
+        for item in items:
+            key = f"{item.data}|{item.descricao}|{item.valor}"
+            if key not in unique_items:
+                unique_items[key] = item
+        
+        return list(unique_items.values())[:50]

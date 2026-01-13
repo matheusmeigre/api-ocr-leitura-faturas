@@ -251,7 +251,15 @@ class NubankParser:
                             data=current_date
                         ))
         
-        return items
+        # Remove duplicatas (proteção adicional)
+        # Cria chave única: data + descrição + valor
+        unique_items = {}
+        for item in items:
+            key = f"{item.data}|{item.descricao}|{item.valor}"
+            if key not in unique_items:
+                unique_items[key] = item
+        
+        return list(unique_items.values())
     
     def _parse_value(self, value_str: str) -> Optional[float]:
         """Converte string de valor para float"""
