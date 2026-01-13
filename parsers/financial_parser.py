@@ -1,11 +1,14 @@
 import re
-from typing import Optional, List, Tuple
+import logging
+import json
+from typing import Optional, List, Tuple, Dict, Any
 from datetime import datetime
 from models import DadosFinanceiros, ItemFinanceiro
 
 # Importa parsers especializados
 try:
     from parsers.banks.nubank_parser import NubankParser
+    from parsers.banks.inter_parser import InterParser
     from parsers.utils.date_parser import DateParser
     from parsers.utils.bank_detector import BankDetector
     from parsers.utils.cnpj_database import CNPJDatabase
@@ -13,6 +16,9 @@ try:
 except ImportError:
     SPECIALIZED_PARSERS_AVAILABLE = False
     print("Aviso: Parsers especializados não disponíveis. Usando apenas parser genérico.")
+
+# Logger estruturado para rastreamento
+logger = logging.getLogger(__name__)
 
 
 class FinancialParser:
@@ -43,6 +49,7 @@ class FinancialParser:
         self.specialized_parsers = {}
         if SPECIALIZED_PARSERS_AVAILABLE:
             self.specialized_parsers['nubank'] = NubankParser()
+            self.specialized_parsers['inter'] = InterParser()
             self.date_parser = DateParser()
             self.bank_detector = BankDetector()
             self.cnpj_db = CNPJDatabase()
@@ -50,6 +57,20 @@ class FinancialParser:
             self.date_parser = None
             self.bank_detector = None
             self.cnpj_db = None
+    
+    def _log_parser_selection(self, event_data: Dict[str, Any]) -> None:
+        """
+        Registra log estruturado sobre seleção de parser.
+        
+        Args:
+            event_data: Dados do evento de parsing
+        """
+        log_entry = {
+            "event": "parser_selection",
+            "timestamp": datetime.now().isoformat(),
+            **event_data
+        }
+        logger.info(json.dumps(log_entry, ensure_ascii=False))
     
     def detect_document_type(self, text: str) -> Tuple[str, float]:
         """
@@ -271,10 +292,21 @@ class FinancialParser:
                 # Verifica se temos parser especializado para este banco
                 if bank_key in self.specialized_parsers:
                     parser = self.specialized_parsers[bank_key]
+                    parser_name = parser.__class__.__name__
                     
                     # Verifica se o parser pode processar este documento
                     if hasattr(parser, 'can_parse') and parser.can_parse(text):
                         try:
+                            # Log: usando parser especializado
+                            self._log_parser_selection({
+                                "bank": bank_key,
+                                "bank_name": bank_name,
+                                "parser": parser_name,
+                                "confidence": round(confidence, 3),
+                                "fallback": False,
+                                "reason": None
+                            })
+                            
                             # Usa parser especializado
                             dados = parser.parse(text)
                             # Se CNPJ não foi encontrado, tenta buscar do banco de dados
@@ -282,8 +314,46 @@ class FinancialParser:
                                 dados.cnpj = self.bank_detector.get_cnpj(bank_key)
                             return dados
                         except Exception as e:
-                            # Se parser especializado falhar, continua com genérico
-                            print(f"Aviso: Parser especializado falhou, usando genérico. Erro: {e}")
+                            # Log: fallback por erro
+                            self._log_parser_selection({
+                                "bank": bank_key,
+                                "bank_name": bank_name,
+                                "parser": "GenericParser",
+                                "confidence": round(confidence, 3),
+                                "fallback": True,
+                                "reason": f"specialized_parser_error: {str(e)}"
+                            })
+                            logger.warning(f"Parser especializado falhou, usando genérico. Erro: {e}")
+                else:
+                    # Log: banco detectado mas sem parser especializado
+                    self._log_parser_selection({
+                        "bank": bank_key,
+                        "bank_name": bank_name,
+                        "parser": "GenericParser",
+                        "confidence": round(confidence, 3),
+                        "fallback": True,
+                        "reason": "no_specialized_parser_available"
+                    })
+            else:
+                # Log: banco não detectado
+                self._log_parser_selection({
+                    "bank": "unknown",
+                    "bank_name": "Unknown",
+                    "parser": "GenericParser",
+                    "confidence": 0.0,
+                    "fallback": True,
+                    "reason": "bank_not_detected"
+                })
+        else:
+            # Log: parsers especializados não disponíveis
+            self._log_parser_selection({
+                "bank": "unknown",
+                "bank_name": "Unknown",
+                "parser": "GenericParser",
+                "confidence": 0.0,
+                "fallback": True,
+                "reason": "specialized_parsers_not_available"
+            })
         
         # Fallback: usa parser genérico
         dados = DadosFinanceiros()

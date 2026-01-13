@@ -9,6 +9,9 @@ from parsers.utils.cnpj_database import CNPJDatabase
 class NubankParser:
     """Parser especializado para faturas do Nubank"""
     
+    # Identificador do banco suportado
+    SUPPORTED_BANK = "nubank"
+    
     # CNPJ do Nubank (conhecido, não aparece na fatura)
     NUBANK_CNPJ = '18.236.120/0001-58'
     NUBANK_NAME = 'Nu Pagamentos S.A.'
