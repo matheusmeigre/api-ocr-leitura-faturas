@@ -23,8 +23,10 @@ class Settings(BaseSettings):
     parser_cache_ttl_seconds: int = 3600  # 1 hora
     parser_cache_max_size: int = 1000
     
-    # Logging
+    # Logging estruturado
     log_level: str = "INFO"
+    log_format_json: bool = True  # JSON logs para observabilidade
+    log_include_timestamp: bool = True
     
     model_config = SettingsConfigDict(
         env_file=".env",

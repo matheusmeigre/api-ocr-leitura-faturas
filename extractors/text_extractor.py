@@ -1,12 +1,18 @@
 import pdfplumber
 import io
 import re
+import time
 from typing import Tuple, Optional
 from paddleocr import PaddleOCR
 from pdf2image import convert_from_bytes
 import numpy as np
 from PIL import Image
 from config import settings
+
+# Importa logger estruturado
+from core.logging.structured_logger import get_logger, log_performance_metric
+
+logger = get_logger(__name__)
 
 
 class TextExtractor:
@@ -37,14 +43,31 @@ class TextExtractor:
         Returns:
             Tuple (texto_extraido, metadados)
         """
+        start_time = time.time()
+        
         try:
+            logger.debug(
+                "Starting native PDF extraction",
+                event="native_extraction_start",
+                method="pdfplumber"
+            )
+            
             pdf_file = io.BytesIO(pdf_bytes)
             text_parts = []
+            tables_found = 0
             
             with pdfplumber.open(pdf_file) as pdf:
                 total_pages = len(pdf.pages)
                 
+                logger.debug(
+                    "PDF opened successfully",
+                    event="pdf_opened",
+                    total_pages=total_pages
+                )
+                
                 for page_num, page in enumerate(pdf.pages, 1):
+                    page_start = time.time()
+                    
                     # Extrai texto
                     page_text = page.extract_text()
                     
@@ -54,23 +77,55 @@ class TextExtractor:
                     # Tenta extrair tabelas se existirem
                     tables = page.extract_tables()
                     if tables:
+                        tables_found += len(tables)
                         for table_idx, table in enumerate(tables, 1):
                             text_parts.append(f"\n[Tabela {table_idx} da página {page_num}]")
                             for row in table:
                                 if row:
                                     text_parts.append(" | ".join([str(cell) if cell else "" for cell in row]))
+                    
+                    page_time_ms = int((time.time() - page_start) * 1000)
+                    
+                    logger.debug(
+                        "Page processed",
+                        event="page_processed",
+                        page_number=page_num,
+                        processing_time_ms=page_time_ms,
+                        text_length=len(page_text) if page_text else 0,
+                        tables_count=len(tables) if tables else 0
+                    )
                 
                 full_text = "\n".join(text_parts)
                 
                 metadata = {
                     "total_pages": total_pages,
                     "extraction_method": "pdfplumber",
-                    "has_tables": any(page.extract_tables() for page in pdf.pages)
+                    "has_tables": tables_found > 0,
+                    "tables_count": tables_found
                 }
+                
+                extraction_time_ms = int((time.time() - start_time) * 1000)
+                
+                logger.info(
+                    "Native PDF extraction completed",
+                    event="native_extraction_complete",
+                    total_pages=total_pages,
+                    text_length=len(full_text),
+                    tables_found=tables_found,
+                    processing_time_ms=extraction_time_ms
+                )
                 
                 return full_text, metadata
                 
         except Exception as e:
+            extraction_time_ms = int((time.time() - start_time) * 1000)
+            
+            logger.error(
+                "Native PDF extraction failed",
+                event="native_extraction_error",
+                error=str(e),
+                processing_time_ms=extraction_time_ms
+            )
             raise Exception(f"Erro ao extrair texto do PDF nativo: {str(e)}")
     
     def extract_from_scanned_pdf(self, pdf_bytes: bytes, dpi: int = 300) -> Tuple[str, dict]:
@@ -84,22 +139,51 @@ class TextExtractor:
         Returns:
             Tuple (texto_extraido, metadados)
         """
+        start_time = time.time()
+        
         try:
+            logger.info(
+                "Starting scanned PDF extraction",
+                event="scanned_extraction_start",
+                method="paddleocr",
+                dpi=dpi
+            )
+            
             # Converte PDF para imagens
+            conversion_start = time.time()
             images = convert_from_bytes(pdf_bytes, dpi=dpi)
+            conversion_time_ms = int((time.time() - conversion_start) * 1000)
+            
+            logger.info(
+                "PDF converted to images",
+                event="pdf_to_images",
+                total_pages=len(images),
+                conversion_time_ms=conversion_time_ms
+            )
             
             text_parts = []
             total_confidence = 0
             total_detections = 0
             
             for page_num, image in enumerate(images, 1):
+                page_start = time.time()
                 text_parts.append(f"--- Página {page_num} ---")
                 
                 # Converte PIL Image para numpy array
                 img_array = np.array(image)
                 
+                logger.debug(
+                    "Processing page with OCR",
+                    event="ocr_page_start",
+                    page_number=page_num,
+                    image_shape=img_array.shape
+                )
+                
                 # Executa OCR
                 ocr_result = self.ocr.ocr(img_array, cls=True)
+                
+                page_detections = 0
+                page_confidence_sum = 0
                 
                 if ocr_result and ocr_result[0]:
                     page_lines = []
@@ -112,8 +196,22 @@ class TextExtractor:
                             page_lines.append(text)
                             total_confidence += confidence
                             total_detections += 1
+                            page_confidence_sum += confidence
+                            page_detections += 1
                     
                     text_parts.append("\n".join(page_lines))
+                
+                page_time_ms = int((time.time() - page_start) * 1000)
+                page_avg_confidence = page_confidence_sum / page_detections if page_detections > 0 else 0.0
+                
+                logger.debug(
+                    "Page OCR completed",
+                    event="ocr_page_complete",
+                    page_number=page_num,
+                    detections=page_detections,
+                    avg_confidence=round(page_avg_confidence, 3),
+                    processing_time_ms=page_time_ms
+                )
             
             full_text = "\n".join(text_parts)
             
@@ -126,9 +224,29 @@ class TextExtractor:
                 "total_detections": total_detections
             }
             
+            extraction_time_ms = int((time.time() - start_time) * 1000)
+            
+            logger.info(
+                "Scanned PDF extraction completed",
+                event="scanned_extraction_complete",
+                total_pages=len(images),
+                text_length=len(full_text),
+                total_detections=total_detections,
+                avg_confidence=round(avg_confidence, 3),
+                processing_time_ms=extraction_time_ms
+            )
+            
             return full_text, metadata
             
         except Exception as e:
+            extraction_time_ms = int((time.time() - start_time) * 1000)
+            
+            logger.error(
+                "Scanned PDF extraction failed",
+                event="scanned_extraction_error",
+                error=str(e),
+                processing_time_ms=extraction_time_ms
+            )
             raise Exception(f"Erro ao extrair texto do PDF escaneado: {str(e)}")
     
     def normalize_text(self, text: str) -> str:
@@ -235,27 +353,71 @@ Documento:
         Returns:
             Tuple (texto_extraido_normalizado, metadados)
         """
+        overall_start = time.time()
+        
         try:
+            logger.info(
+                "Text extraction started",
+                event="text_extraction_start",
+                pdf_type=pdf_type
+            )
+            
             if pdf_type == "native":
                 raw_text, metadata = self.extract_from_native_pdf(pdf_bytes)
             elif pdf_type == "scanned":
                 raw_text, metadata = self.extract_from_scanned_pdf(pdf_bytes)
             else:
                 # Tenta nativo primeiro, se falhar tenta escaneado
+                logger.debug(
+                    "Unknown PDF type, trying native first",
+                    event="fallback_extraction"
+                )
                 try:
                     raw_text, metadata = self.extract_from_native_pdf(pdf_bytes)
                     if len(raw_text.strip()) < 50:  # Pouco texto, tenta OCR
+                        logger.debug(
+                            "Native extraction insufficient, switching to OCR",
+                            event="fallback_to_ocr",
+                            text_length=len(raw_text)
+                        )
                         raw_text, metadata = self.extract_from_scanned_pdf(pdf_bytes)
                 except:
+                    logger.debug(
+                        "Native extraction failed, using OCR",
+                        event="fallback_to_ocr_error"
+                    )
                     raw_text, metadata = self.extract_from_scanned_pdf(pdf_bytes)
             
             # Normaliza o texto
+            normalization_start = time.time()
             normalized_text = self.normalize_text(raw_text)
+            normalization_time_ms = int((time.time() - normalization_start) * 1000)
             
             metadata["raw_text_length"] = len(raw_text)
             metadata["normalized_text_length"] = len(normalized_text)
             
+            total_time_ms = int((time.time() - overall_start) * 1000)
+            
+            logger.info(
+                "Text extraction completed",
+                event="text_extraction_complete",
+                raw_text_length=len(raw_text),
+                normalized_text_length=len(normalized_text),
+                normalization_time_ms=normalization_time_ms,
+                total_processing_time_ms=total_time_ms,
+                extraction_method=metadata.get("extraction_method")
+            )
+            
             return normalized_text, metadata
             
         except Exception as e:
+            total_time_ms = int((time.time() - overall_start) * 1000)
+            
+            logger.error(
+                "Text extraction failed",
+                event="text_extraction_error",
+                error=str(e),
+                pdf_type=pdf_type,
+                processing_time_ms=total_time_ms
+            )
             raise Exception(f"Erro ao extrair texto: {str(e)}")
