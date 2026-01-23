@@ -74,16 +74,16 @@ async def startup_event():
     global ocr_ready
     
     logger.info(
-        "API startup initiated",
         event="startup",
+        message="API startup initiated",
         version="1.0.0",
         environment="production" if not settings.api_debug else "development"
     )
     
     try:
         logger.info(
-            "Warming up PaddleOCR",
-            event="ocr_warmup_start"
+            event="ocr_warmup_start",
+            message="Warming up PaddleOCR"
         )
         
         # Força inicialização do OCR criando uma imagem pequena de teste
@@ -94,15 +94,15 @@ async def startup_event():
         ocr_ready = True
         
         logger.info(
-            "PaddleOCR warmup completed",
             event="ocr_warmup_complete",
+            message="PaddleOCR warmup completed",
             status="ready"
         )
         
     except Exception as e:
         logger.error(
-            "PaddleOCR warmup failed",
             event="ocr_warmup_error",
+            message="PaddleOCR warmup failed",
             error=str(e),
             status="degraded"
         )
@@ -282,8 +282,8 @@ async def extract_financial_data(
         detection_time_ms = int((time.time() - detection_start) * 1000)
         
         logger.info(
-            "PDF type detected",
             event="pdf_detection",
+            message="PDF type detected",
             pdf_type=pdf_type,
             confidence=round(pdf_confidence, 3),
             detection_time_ms=detection_time_ms,
@@ -374,8 +374,8 @@ async def extract_financial_data(
         document_type, doc_confidence = financial_parser.detect_document_type(extracted_text)
         
         logger.info(
-            "Document type detected",
             event="document_detection",
+            message="Document type detected",
             document_type=document_type,
             confidence=round(doc_confidence, 3),
             file_name=file.filename
@@ -566,8 +566,8 @@ async def extract_for_llm(
         pdf_type, pdf_confidence = detect_pdf_type(file_bytes)
         
         logger.info(
-            "LLM extraction started",
             event="llm_extraction",
+            message="LLM extraction started",
             pdf_type=pdf_type,
             file_name=file.filename
         )
@@ -585,8 +585,8 @@ async def extract_for_llm(
         )
         
         logger.info(
-            "LLM extraction completed",
             event="llm_extraction_complete",
+            message="LLM extraction completed",
             document_type=document_type,
             text_length=len(extracted_text),
             file_name=file.filename
