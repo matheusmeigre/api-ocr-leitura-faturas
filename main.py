@@ -39,6 +39,39 @@ app.add_middleware(
 text_extractor = TextExtractor()
 financial_parser = FinancialParser()
 
+# Flag para indicar se o OCR está pronto
+ocr_ready = False
+
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Evento executado na inicialização da API.
+    Faz warm-up do PaddleOCR para evitar cold start na primeira requisição.
+    """
+    global ocr_ready
+    logger.info("=" * 60)
+    logger.info("🚀 Iniciando API de OCR...")
+    logger.info("=" * 60)
+    
+    try:
+        logger.info("🔥 Aquecendo PaddleOCR (pre-warmup)...")
+        # Força inicialização do OCR criando uma imagem pequena de teste
+        import numpy as np
+        dummy_image = np.ones((100, 100, 3), dtype=np.uint8) * 255
+        _ = text_extractor.ocr.ocr(dummy_image, cls=False)
+        
+        ocr_ready = True
+        logger.info("✅ PaddleOCR aquecido e pronto!")
+        logger.info("=" * 60)
+        logger.info("🎯 API pronta para receber requisições")
+        logger.info("=" * 60)
+        
+    except Exception as e:
+        logger.error(f"⚠️ Erro ao aquecer PaddleOCR: {str(e)}")
+        logger.warning("API continuará, mas primeira requisição OCR será mais lenta")
+        ocr_ready = False
+
 
 @app.get("/")
 async def root():
@@ -60,8 +93,32 @@ async def health():
     """Health check da API"""
     return {
         "status": "healthy",
-        "service": "api-ocr-leitura-faturas"
+        "service": "api-ocr-leitura-faturas",
+        "ocr_ready": ocr_ready
     }
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """
+    Health check detalhado indicando se a API está pronta para processar OCR.
+    Útil para load balancers e monitoring.
+    """
+    if ocr_ready:
+        return {
+            "status": "ready",
+            "message": "API pronta para processar requisições OCR",
+            "ocr_initialized": True
+        }
+    else:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "message": "PaddleOCR ainda está inicializando. Aguarde alguns segundos.",
+                "ocr_initialized": False
+            }
+        )
 
 
 @app.post(
