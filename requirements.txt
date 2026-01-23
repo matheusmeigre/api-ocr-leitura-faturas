@@ -13,3 +13,7 @@ pydantic-settings==2.7.1
 shapely>=2.0.0
 pyclipper>=1.3.0
 setuptools>=65.0.0
+
+# Logging estruturado e observabilidade
+structlog==24.1.0
+python-json-logger==2.0.7

@@ -2,6 +2,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
+import time
 from typing import Optional
 
 from config import settings
@@ -10,12 +11,30 @@ from utils.pdf_detector import detect_pdf_type, is_valid_pdf, get_pdf_metadata
 from extractors.text_extractor import TextExtractor
 from parsers.financial_parser import FinancialParser
 
-# Configuração de logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Importa sistema de logging estruturado
+from core.logging.structured_logger import (
+    configure_logging,
+    get_logger,
+    add_trace_id_to_context,
+    log_request_start,
+    log_request_end,
+    log_ocr_processing,
+    log_ocr_result,
+    log_extraction_result,
+    log_error,
+    log_validation_error,
 )
-logger = logging.getLogger(__name__)
+from core.logging.middleware import setup_logging_middleware
+
+# Configura logging estruturado
+configure_logging(
+    log_level=settings.log_level,
+    json_logs=settings.log_format_json,
+    include_timestamp=settings.log_include_timestamp
+)
+
+# Logger estruturado para este módulo
+logger = get_logger(__name__)
 
 # Inicializa FastAPI
 app = FastAPI(
@@ -35,6 +54,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Configura middlewares de logging estruturado
+setup_logging_middleware(app)
+
 # Inicializa componentes (lazy loading)
 text_extractor = TextExtractor()
 financial_parser = FinancialParser()
@@ -50,26 +72,40 @@ async def startup_event():
     Faz warm-up do PaddleOCR para evitar cold start na primeira requisição.
     """
     global ocr_ready
-    logger.info("=" * 60)
-    logger.info("🚀 Iniciando API de OCR...")
-    logger.info("=" * 60)
+    
+    logger.info(
+        "API startup initiated",
+        event="startup",
+        version="1.0.0",
+        environment="production" if not settings.api_debug else "development"
+    )
     
     try:
-        logger.info("🔥 Aquecendo PaddleOCR (pre-warmup)...")
+        logger.info(
+            "Warming up PaddleOCR",
+            event="ocr_warmup_start"
+        )
+        
         # Força inicialização do OCR criando uma imagem pequena de teste
         import numpy as np
         dummy_image = np.ones((100, 100, 3), dtype=np.uint8) * 255
         _ = text_extractor.ocr.ocr(dummy_image, cls=False)
         
         ocr_ready = True
-        logger.info("✅ PaddleOCR aquecido e pronto!")
-        logger.info("=" * 60)
-        logger.info("🎯 API pronta para receber requisições")
-        logger.info("=" * 60)
+        
+        logger.info(
+            "PaddleOCR warmup completed",
+            event="ocr_warmup_complete",
+            status="ready"
+        )
         
     except Exception as e:
-        logger.error(f"⚠️ Erro ao aquecer PaddleOCR: {str(e)}")
-        logger.warning("API continuará, mas primeira requisição OCR será mais lenta")
+        logger.error(
+            "PaddleOCR warmup failed",
+            event="ocr_warmup_error",
+            error=str(e),
+            status="degraded"
+        )
         ocr_ready = False
 
 
@@ -160,9 +196,18 @@ async def extract_financial_data(
     Returns:
         ExtractionResponse com dados financeiros estruturados
     """
+    # Gera trace_id para rastreamento
+    trace_id = add_trace_id_to_context()
+    start_time = time.time()
+    
     try:
         # Validações básicas
         if not file.filename:
+            log_validation_error(
+                logger=logger,
+                validation_type="filename",
+                reason="Nome do arquivo não fornecido"
+            )
             raise HTTPException(
                 status_code=400,
                 detail="Nome do arquivo não fornecido"
@@ -170,6 +215,12 @@ async def extract_financial_data(
         
         # Verifica extensão
         if not file.filename.lower().endswith('.pdf'):
+            log_validation_error(
+                logger=logger,
+                validation_type="format",
+                reason="Apenas arquivos PDF são aceitos",
+                file_name=file.filename
+            )
             return JSONResponse(
                 status_code=400,
                 content=ErrorResponse(
@@ -179,12 +230,28 @@ async def extract_financial_data(
             )
         
         # Lê o conteúdo do arquivo
-        logger.info(f"Processando arquivo: {file.filename}")
         file_bytes = await file.read()
+        file_size_bytes = len(file_bytes)
+        
+        # Log do início do processamento
+        log_request_start(
+            logger=logger,
+            endpoint="/extract",
+            method="POST",
+            file_name=file.filename,
+            file_size_bytes=file_size_bytes
+        )
         
         # Verifica tamanho
-        file_size_mb = len(file_bytes) / (1024 * 1024)
+        file_size_mb = file_size_bytes / (1024 * 1024)
         if file_size_mb > settings.max_file_size_mb:
+            log_validation_error(
+                logger=logger,
+                validation_type="size",
+                reason=f"Arquivo excede o tamanho máximo de {settings.max_file_size_mb}MB",
+                file_name=file.filename,
+                file_size_mb=round(file_size_mb, 2)
+            )
             return JSONResponse(
                 status_code=400,
                 content=ErrorResponse(
@@ -195,6 +262,12 @@ async def extract_financial_data(
         
         # Valida se é um PDF válido
         if not is_valid_pdf(file_bytes):
+            log_validation_error(
+                logger=logger,
+                validation_type="content",
+                reason="PDF inválido ou corrompido",
+                file_name=file.filename
+            )
             return JSONResponse(
                 status_code=400,
                 content=ErrorResponse(
@@ -203,23 +276,74 @@ async def extract_financial_data(
                 ).model_dump()
             )
         
-        logger.info("Detectando tipo de PDF...")
         # Detecta tipo de PDF
+        detection_start = time.time()
         pdf_type, pdf_confidence = detect_pdf_type(file_bytes)
-        logger.info(f"Tipo detectado: {pdf_type} (confiança: {pdf_confidence:.2f})")
+        detection_time_ms = int((time.time() - detection_start) * 1000)
+        
+        logger.info(
+            "PDF type detected",
+            event="pdf_detection",
+            pdf_type=pdf_type,
+            confidence=round(pdf_confidence, 3),
+            detection_time_ms=detection_time_ms,
+            file_name=file.filename
+        )
         
         # Extrai metadados
         pdf_metadata = get_pdf_metadata(file_bytes)
         
-        logger.info(f"Extraindo texto usando método: {pdf_type}")
+        # Log do início da extração OCR
+        log_ocr_processing(
+            logger=logger,
+            pdf_type=pdf_type,
+            total_pages=pdf_metadata.get("total_pages", 0),
+            method="pdfplumber" if pdf_type == "native" else "paddleocr",
+            confidence=pdf_confidence,
+            file_name=file.filename
+        )
+        
         # Extrai texto
+        ocr_start = time.time()
         try:
             extracted_text, extraction_metadata = text_extractor.extract_text(
                 file_bytes,
                 pdf_type=pdf_type
             )
+            ocr_time_ms = int((time.time() - ocr_start) * 1000)
+            
+            # Log do resultado do OCR
+            log_ocr_result(
+                logger=logger,
+                success=True,
+                text_length=len(extracted_text),
+                processing_time_ms=ocr_time_ms,
+                pages_processed=extraction_metadata.get("total_pages", 0),
+                avg_confidence=extraction_metadata.get("average_confidence"),
+                file_name=file.filename
+            )
+            
         except Exception as e:
-            logger.error(f"Erro na extração de texto: {str(e)}")
+            ocr_time_ms = int((time.time() - ocr_start) * 1000)
+            
+            log_ocr_result(
+                logger=logger,
+                success=False,
+                text_length=0,
+                processing_time_ms=ocr_time_ms,
+                pages_processed=0,
+                error_message=str(e),
+                file_name=file.filename
+            )
+            
+            log_error(
+                logger=logger,
+                error_type="OCRExtractionError",
+                error_message=str(e),
+                endpoint="/extract",
+                file_name=file.filename
+            )
+            
             return JSONResponse(
                 status_code=500,
                 content=ErrorResponse(
@@ -230,6 +354,13 @@ async def extract_financial_data(
         
         # Verifica se conseguiu extrair texto
         if not extracted_text or len(extracted_text.strip()) < 10:
+            log_validation_error(
+                logger=logger,
+                validation_type="content",
+                reason="Texto extraído insuficiente",
+                file_name=file.filename,
+                text_length=len(extracted_text)
+            )
             return JSONResponse(
                 status_code=400,
                 content=ErrorResponse(
@@ -238,20 +369,46 @@ async def extract_financial_data(
                 ).model_dump()
             )
         
-        logger.info("Identificando tipo de documento...")
         # Detecta tipo de documento
+        parsing_start = time.time()
         document_type, doc_confidence = financial_parser.detect_document_type(extracted_text)
-        logger.info(f"Tipo de documento: {document_type} (confiança: {doc_confidence:.2f})")
         
-        logger.info("Extraindo dados financeiros...")
+        logger.info(
+            "Document type detected",
+            event="document_detection",
+            document_type=document_type,
+            confidence=round(doc_confidence, 3),
+            file_name=file.filename
+        )
+        
         # Parse dos dados financeiros
         try:
             financial_data = financial_parser.parse_financial_data(
                 extracted_text,
                 document_type=document_type
             )
+            parsing_time_ms = int((time.time() - parsing_start) * 1000)
+            
+            # Log do resultado da extração
+            log_extraction_result(
+                logger=logger,
+                document_type=document_type,
+                fields_extracted=financial_data.model_dump(),
+                confidence=doc_confidence,
+                bank_detected=getattr(financial_data, 'banco', None),
+                parser_used="specialized" if hasattr(financial_parser, 'last_parser_used') else "generic",
+                file_name=file.filename,
+                parsing_time_ms=parsing_time_ms
+            )
+            
         except Exception as e:
-            logger.error(f"Erro ao parsear dados financeiros: {str(e)}")
+            log_error(
+                logger=logger,
+                error_type="ParsingError",
+                error_message=str(e),
+                endpoint="/extract",
+                file_name=file.filename
+            )
             # Retorna dados vazios em caso de erro no parse
             financial_data = DadosFinanceiros()
         
@@ -296,13 +453,39 @@ async def extract_financial_data(
             metadata=metadata
         )
         
-        logger.info(f"Extração concluída com sucesso: {file.filename}")
+        # Log de conclusão da requisição
+        log_request_end(
+            logger=logger,
+            endpoint="/extract",
+            status_code=200,
+            start_time=start_time,
+            success=True,
+            document_type=document_type,
+            file_name=file.filename,
+            overall_confidence=round(overall_confidence, 3)
+        )
+        
         return response
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro inesperado: {str(e)}", exc_info=True)
+        log_error(
+            logger=logger,
+            error_type="UnexpectedError",
+            error_message=str(e),
+            endpoint="/extract",
+            file_name=file.filename if file else None
+        )
+        
+        log_request_end(
+            logger=logger,
+            endpoint="/extract",
+            status_code=500,
+            start_time=start_time,
+            success=False
+        )
+        
         return JSONResponse(
             status_code=500,
             content=ErrorResponse(
@@ -331,16 +514,39 @@ async def extract_for_llm(
     Este endpoint é útil quando você quer usar um LLM para extrair
     informações adicionais ou fazer análises mais sofisticadas do documento.
     """
+    trace_id = add_trace_id_to_context()
+    start_time = time.time()
+    
     try:
-        # Reutiliza a lógica do endpoint principal
         # Validações básicas
         if not file.filename or not file.filename.lower().endswith('.pdf'):
+            log_validation_error(
+                logger=logger,
+                validation_type="format",
+                reason="Apenas arquivos PDF são aceitos",
+                file_name=file.filename if file.filename else "unknown"
+            )
             raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
         
         file_bytes = await file.read()
+        file_size_bytes = len(file_bytes)
+        
+        log_request_start(
+            logger=logger,
+            endpoint="/extract-for-llm",
+            method="POST",
+            file_name=file.filename,
+            file_size_bytes=file_size_bytes
+        )
         
         # Valida tamanho
-        if len(file_bytes) / (1024 * 1024) > settings.max_file_size_mb:
+        if file_size_bytes / (1024 * 1024) > settings.max_file_size_mb:
+            log_validation_error(
+                logger=logger,
+                validation_type="size",
+                reason=f"Arquivo excede o tamanho máximo de {settings.max_file_size_mb}MB",
+                file_name=file.filename
+            )
             raise HTTPException(
                 status_code=400,
                 detail=f"Arquivo muito grande. Máximo: {settings.max_file_size_mb}MB"
@@ -348,10 +554,24 @@ async def extract_for_llm(
         
         # Valida PDF
         if not is_valid_pdf(file_bytes):
+            log_validation_error(
+                logger=logger,
+                validation_type="content",
+                reason="PDF inválido ou corrompido",
+                file_name=file.filename
+            )
             raise HTTPException(status_code=400, detail="PDF inválido ou corrompido")
         
         # Detecta tipo e extrai texto
-        pdf_type, _ = detect_pdf_type(file_bytes)
+        pdf_type, pdf_confidence = detect_pdf_type(file_bytes)
+        
+        logger.info(
+            "LLM extraction started",
+            event="llm_extraction",
+            pdf_type=pdf_type,
+            file_name=file.filename
+        )
+        
         extracted_text, extraction_metadata = text_extractor.extract_text(file_bytes, pdf_type)
         
         # Prepara para LLM
@@ -362,6 +582,24 @@ async def extract_for_llm(
         financial_data = financial_parser.parse_financial_data(extracted_text, document_type)
         extraction_confidence = financial_parser.calculate_extraction_confidence(
             financial_data, document_type
+        )
+        
+        logger.info(
+            "LLM extraction completed",
+            event="llm_extraction_complete",
+            document_type=document_type,
+            text_length=len(extracted_text),
+            file_name=file.filename
+        )
+        
+        log_request_end(
+            logger=logger,
+            endpoint="/extract-for-llm",
+            status_code=200,
+            start_time=start_time,
+            success=True,
+            document_type=document_type,
+            file_name=file.filename
         )
         
         return {
@@ -382,7 +620,22 @@ async def extract_for_llm(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro no endpoint LLM: {str(e)}", exc_info=True)
+        log_error(
+            logger=logger,
+            error_type="LLMExtractionError",
+            error_message=str(e),
+            endpoint="/extract-for-llm",
+            file_name=file.filename if file else None
+        )
+        
+        log_request_end(
+            logger=logger,
+            endpoint="/extract-for-llm",
+            status_code=500,
+            start_time=start_time,
+            success=False
+        )
+        
         raise HTTPException(status_code=500, detail=str(e))
 
 
