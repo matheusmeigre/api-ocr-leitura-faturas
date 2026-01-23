@@ -225,7 +225,7 @@ def log_request_start(
     
     log_data.update(extra_context)
     
-    logger.info("Request received", **log_data)
+    logger.info(**log_data)
     
     return {
         "trace_id": trace_id,
@@ -270,9 +270,9 @@ def log_request_end(
     log_data.update(extra_context)
     
     if success:
-        logger.info("Request completed successfully", **log_data)
+        logger.info(**log_data)
     else:
-        logger.warning("Request completed with errors", **log_data)
+        logger.warning(**log_data)
 
 
 def log_ocr_processing(
@@ -306,7 +306,7 @@ def log_ocr_processing(
     
     log_data.update(extra_context)
     
-    logger.info("OCR processing started", **log_data)
+    logger.info(**log_data)
 
 
 def log_ocr_result(
@@ -349,9 +349,9 @@ def log_ocr_result(
     log_data.update(extra_context)
     
     if success:
-        logger.info("OCR completed successfully", **log_data)
+        logger.info(**log_data)
     else:
-        logger.error("OCR failed", **log_data)
+        logger.error(**log_data)
 
 
 def log_extraction_result(
@@ -393,7 +393,7 @@ def log_extraction_result(
     
     log_data.update(extra_context)
     
-    logger.info("Data extraction completed", **log_data)
+    logger.info(**log_data)
 
 
 def log_error(
@@ -432,7 +432,7 @@ def log_error(
     
     log_data.update(extra_context)
     
-    logger.error("Error occurred", **log_data)
+    logger.error(**log_data)
 
 
 def log_validation_error(
@@ -463,7 +463,7 @@ def log_validation_error(
     
     log_data.update(extra_context)
     
-    logger.warning("Validation failed", **log_data)
+    logger.warning(**log_data)
 
 
 def log_performance_metric(
@@ -492,4 +492,4 @@ def log_performance_metric(
     
     log_data.update(extra_context)
     
-    logger.debug("Performance metric recorded", **log_data)
+    logger.debug(**log_data)
