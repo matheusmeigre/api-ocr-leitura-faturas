@@ -87,8 +87,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         
         # Log de início da requisição
         logger.info(
-            "Request started",
             event="request_started",
+            message="Request started",
             method=method,
             path=path,
             client_host=client_host,
@@ -144,9 +144,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             if error_occurred:
                 log_data["error"] = True
                 log_data["error_detail"] = error_detail
-                logger.error("Request failed", **log_data)
+                logger.error(**log_data)
             else:
-                logger.info("Request completed", **log_data)
+                logger.info(**log_data)
         
         return response
 
@@ -182,8 +182,8 @@ class FileUploadLoggingMiddleware(BaseHTTPMiddleware):
         if "multipart/form-data" in content_type:
             # Log específico de upload
             logger.debug(
-                "File upload detected",
                 event="file_upload_started",
+                message="File upload detected",
                 path=request.url.path,
                 content_type=content_type
             )
@@ -210,7 +210,7 @@ def setup_logging_middleware(app):
     app.add_middleware(FileUploadLoggingMiddleware)
     
     logger.info(
-        "Logging middleware configured",
         event="middleware_setup",
+        message="Logging middleware configured",
         middlewares=["RequestLoggingMiddleware", "FileUploadLoggingMiddleware"]
     )
