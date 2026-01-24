@@ -47,8 +47,8 @@ class TextExtractor:
         
         try:
             logger.debug(
-                "Starting native PDF extraction",
                 event="native_extraction_start",
+                message="Starting native PDF extraction",
                 method="pdfplumber"
             )
             
@@ -60,8 +60,8 @@ class TextExtractor:
                 total_pages = len(pdf.pages)
                 
                 logger.debug(
-                    "PDF opened successfully",
                     event="pdf_opened",
+                    message="PDF opened successfully",
                     total_pages=total_pages
                 )
                 
@@ -87,8 +87,8 @@ class TextExtractor:
                     page_time_ms = int((time.time() - page_start) * 1000)
                     
                     logger.debug(
-                        "Page processed",
                         event="page_processed",
+                        message="Page processed",
                         page_number=page_num,
                         processing_time_ms=page_time_ms,
                         text_length=len(page_text) if page_text else 0,
@@ -107,8 +107,8 @@ class TextExtractor:
                 extraction_time_ms = int((time.time() - start_time) * 1000)
                 
                 logger.info(
-                    "Native PDF extraction completed",
                     event="native_extraction_complete",
+                    message="Native PDF extraction completed",
                     total_pages=total_pages,
                     text_length=len(full_text),
                     tables_found=tables_found,
@@ -121,8 +121,8 @@ class TextExtractor:
             extraction_time_ms = int((time.time() - start_time) * 1000)
             
             logger.error(
-                "Native PDF extraction failed",
                 event="native_extraction_error",
+                message="Native PDF extraction failed",
                 error=str(e),
                 processing_time_ms=extraction_time_ms
             )
@@ -143,8 +143,8 @@ class TextExtractor:
         
         try:
             logger.info(
-                "Starting scanned PDF extraction",
                 event="scanned_extraction_start",
+                message="Starting scanned PDF extraction",
                 method="paddleocr",
                 dpi=dpi
             )
@@ -155,8 +155,8 @@ class TextExtractor:
             conversion_time_ms = int((time.time() - conversion_start) * 1000)
             
             logger.info(
-                "PDF converted to images",
                 event="pdf_to_images",
+                message="PDF converted to images",
                 total_pages=len(images),
                 conversion_time_ms=conversion_time_ms
             )
@@ -173,8 +173,8 @@ class TextExtractor:
                 img_array = np.array(image)
                 
                 logger.debug(
-                    "Processing page with OCR",
                     event="ocr_page_start",
+                    message="Processing page with OCR",
                     page_number=page_num,
                     image_shape=img_array.shape
                 )
@@ -205,8 +205,8 @@ class TextExtractor:
                 page_avg_confidence = page_confidence_sum / page_detections if page_detections > 0 else 0.0
                 
                 logger.debug(
-                    "Page OCR completed",
                     event="ocr_page_complete",
+                    message="Page OCR completed",
                     page_number=page_num,
                     detections=page_detections,
                     avg_confidence=round(page_avg_confidence, 3),
@@ -227,8 +227,8 @@ class TextExtractor:
             extraction_time_ms = int((time.time() - start_time) * 1000)
             
             logger.info(
-                "Scanned PDF extraction completed",
                 event="scanned_extraction_complete",
+                message="Scanned PDF extraction completed",
                 total_pages=len(images),
                 text_length=len(full_text),
                 total_detections=total_detections,
@@ -242,8 +242,8 @@ class TextExtractor:
             extraction_time_ms = int((time.time() - start_time) * 1000)
             
             logger.error(
-                "Scanned PDF extraction failed",
                 event="scanned_extraction_error",
+                message="Scanned PDF extraction failed",
                 error=str(e),
                 processing_time_ms=extraction_time_ms
             )
@@ -357,8 +357,8 @@ Documento:
         
         try:
             logger.info(
-                "Text extraction started",
                 event="text_extraction_start",
+                message="Text extraction started",
                 pdf_type=pdf_type
             )
             
@@ -369,22 +369,22 @@ Documento:
             else:
                 # Tenta nativo primeiro, se falhar tenta escaneado
                 logger.debug(
-                    "Unknown PDF type, trying native first",
-                    event="fallback_extraction"
+                    event="fallback_extraction",
+                    message="Unknown PDF type, trying native first"
                 )
                 try:
                     raw_text, metadata = self.extract_from_native_pdf(pdf_bytes)
                     if len(raw_text.strip()) < 50:  # Pouco texto, tenta OCR
                         logger.debug(
-                            "Native extraction insufficient, switching to OCR",
                             event="fallback_to_ocr",
+                            message="Native extraction insufficient, switching to OCR",
                             text_length=len(raw_text)
                         )
                         raw_text, metadata = self.extract_from_scanned_pdf(pdf_bytes)
                 except:
                     logger.debug(
-                        "Native extraction failed, using OCR",
-                        event="fallback_to_ocr_error"
+                        event="fallback_to_ocr_error",
+                        message="Native extraction failed, using OCR"
                     )
                     raw_text, metadata = self.extract_from_scanned_pdf(pdf_bytes)
             
@@ -399,8 +399,8 @@ Documento:
             total_time_ms = int((time.time() - overall_start) * 1000)
             
             logger.info(
-                "Text extraction completed",
                 event="text_extraction_complete",
+                message="Text extraction completed",
                 raw_text_length=len(raw_text),
                 normalized_text_length=len(normalized_text),
                 normalization_time_ms=normalization_time_ms,
@@ -414,8 +414,8 @@ Documento:
             total_time_ms = int((time.time() - overall_start) * 1000)
             
             logger.error(
-                "Text extraction failed",
                 event="text_extraction_error",
+                message="Text extraction failed",
                 error=str(e),
                 pdf_type=pdf_type,
                 processing_time_ms=total_time_ms

@@ -225,7 +225,9 @@ def log_request_start(
     
     log_data.update(extra_context)
     
-    logger.info(**log_data)
+    # Extrai event para evitar conflito com BoundLogger
+    event = log_data.pop("event")
+    logger.info(event, **log_data)
     
     return {
         "trace_id": trace_id,
@@ -269,10 +271,13 @@ def log_request_end(
     
     log_data.update(extra_context)
     
+    # Extrai event para evitar conflito com BoundLogger
+    event = log_data.pop("event")
+    
     if success:
-        logger.info(**log_data)
+        logger.info(event, **log_data)
     else:
-        logger.warning(**log_data)
+        logger.warning(event, **log_data)
 
 
 def log_ocr_processing(
@@ -306,7 +311,9 @@ def log_ocr_processing(
     
     log_data.update(extra_context)
     
-    logger.info(**log_data)
+    # Extrai event para evitar conflito com BoundLogger
+    event = log_data.pop("event")
+    logger.info(event, **log_data)
 
 
 def log_ocr_result(
@@ -348,10 +355,13 @@ def log_ocr_result(
     
     log_data.update(extra_context)
     
+    # Extrai event para evitar conflito com BoundLogger
+    event = log_data.pop("event")
+    
     if success:
-        logger.info(**log_data)
+        logger.info(event, **log_data)
     else:
-        logger.error(**log_data)
+        logger.error(event, **log_data)
 
 
 def log_extraction_result(
@@ -393,7 +403,9 @@ def log_extraction_result(
     
     log_data.update(extra_context)
     
-    logger.info(**log_data)
+    # Extrai event para evitar conflito com BoundLogger
+    event = log_data.pop("event")
+    logger.info(event, **log_data)
 
 
 def log_error(
@@ -432,7 +444,10 @@ def log_error(
     
     log_data.update(extra_context)
     
-    logger.error(**log_data)
+    # Extrai event para evitar conflito com BoundLogger
+    event = log_data.pop("event")
+    
+    logger.error(event, **log_data)
 
 
 def log_validation_error(
@@ -463,7 +478,9 @@ def log_validation_error(
     
     log_data.update(extra_context)
     
-    logger.warning(**log_data)
+    # Extrai event para evitar conflito com BoundLogger
+    event = log_data.pop("event")
+    logger.warning(event, **log_data)
 
 
 def log_performance_metric(
@@ -492,4 +509,6 @@ def log_performance_metric(
     
     log_data.update(extra_context)
     
-    logger.debug(**log_data)
+    # Extrai event para evitar conflito com BoundLogger
+    event = log_data.pop("event")
+    logger.debug(event, **log_data)

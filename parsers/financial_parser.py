@@ -164,8 +164,8 @@ class FinancialParser:
         scores = {}
         
         logger.debug(
-            "Document type detection started",
             event="document_detection_start",
+            message="Document type detection started",
             text_length=len(text)
         )
         
@@ -175,8 +175,8 @@ class FinancialParser:
         
         if not scores or max(scores.values()) == 0:
             logger.info(
-                "Document type unknown",
                 event="document_detection_unknown",
+                message="Document type unknown",
                 processing_time_ms=int((time.time() - start_time) * 1000)
             )
             return "desconhecido", 0.0
@@ -186,8 +186,8 @@ class FinancialParser:
         confidence = min(1.0, max_score / 3)  # Normaliza até 3 palavras-chave
         
         logger.info(
-            "Document type detected",
             event="document_detection_complete",
+            message="Document type detected",
             document_type=best_type,
             confidence=round(confidence, 3),
             scores=scores,
@@ -383,8 +383,8 @@ class FinancialParser:
         start_time = time.time()
         
         logger.info(
-            "Financial data parsing started",
             event="parsing_start",
+            message="Financial data parsing started",
             document_type=document_type,
             text_length=len(text)
         )
@@ -406,8 +406,8 @@ class FinancialParser:
                 if bank_detection and self.metrics:
                     self.metrics.record_cache_hit()
                     logger.debug(
-                        "Bank detection cache hit",
                         event="cache_hit",
+                        message="Bank detection cache hit",
                         bank=bank_detection[0]
                     )
             
@@ -421,8 +421,8 @@ class FinancialParser:
                 detection_time_ms = int((time.time() - detection_start) * 1000)
                 
                 logger.info(
-                    "Bank detected",
                     event="bank_detection",
+                    message="Bank detected",
                     bank=bank_detection[0] if bank_detection else None,
                     confidence=round(bank_detection[2], 3) if bank_detection else 0,
                     detection_time_ms=detection_time_ms
@@ -438,8 +438,8 @@ class FinancialParser:
                             # Se ML tem maior confiança, usa predição do ML
                             if ml_confidence > rule_confidence:
                                 logger.info(
-                                    "ML classifier override",
                                     event="ml_override",
+                                    message="ML classifier override",
                                     ml_bank=ml_bank,
                                     ml_confidence=round(ml_confidence, 3),
                                     rule_bank=bank_detection[0],
@@ -460,8 +460,8 @@ class FinancialParser:
                     parser_name = parser.__class__.__name__
                     
                     logger.info(
-                        "Using specialized parser",
                         event="parser_selection",
+                        message="Using specialized parser",
                         bank=bank_key,
                         parser=parser_name,
                         confidence=round(confidence, 3)
@@ -488,8 +488,8 @@ class FinancialParser:
                             success = True
                             
                             logger.info(
-                                "Specialized parser completed",
                                 event="specialized_parsing_complete",
+                                message="Specialized parser completed",
                                 bank=bank_key,
                                 parser=parser_name,
                                 parsing_time_ms=parsing_time_ms
@@ -517,8 +517,8 @@ class FinancialParser:
                         except Exception as e:
                             # Log: fallback por erro
                             logger.warning(
-                                "Specialized parser failed, falling back to generic",
                                 event="parser_fallback",
+                                message="Specialized parser failed, falling back to generic",
                                 bank=bank_key,
                                 parser=parser_name,
                                 error=str(e)
@@ -536,8 +536,8 @@ class FinancialParser:
                 else:
                     # Log: banco detectado mas sem parser especializado
                     logger.info(
-                        "No specialized parser available, using generic",
                         event="no_specialized_parser",
+                        message="No specialized parser available, using generic",
                         bank=bank_key
                     )
                     
@@ -553,8 +553,8 @@ class FinancialParser:
             else:
                 # Log: banco não detectado
                 logger.info(
-                    "Bank not detected, using generic parser",
-                    event="bank_not_detected"
+                    event="bank_not_detected",
+                    message="Bank not detected, using generic parser"
                 )
                 
                 self._log_parser_selection({

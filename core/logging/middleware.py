@@ -141,12 +141,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "trace_id": trace_id
             }
             
+            # Extrai event para evitar conflito com BoundLogger
+            event = log_data.pop("event")
+            
             if error_occurred:
                 log_data["error"] = True
                 log_data["error_detail"] = error_detail
-                logger.error(**log_data)
+                logger.error(event, **log_data)
             else:
-                logger.info(**log_data)
+                logger.info(event, **log_data)
         
         return response
 
